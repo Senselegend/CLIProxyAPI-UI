@@ -18,35 +18,36 @@ pgstore/*
 gitstore/*
 objectstore/*
 
-# Static assets
-static/*
+# Static assets (exclude dashboard source for new frontend)
+static/assets/*
+static/index.html
+static/app.css
+static/app.js
+static/app_shell_helpers.js
 
 # Authentication data
 auths/*
 !auths/.gitkeep
 
-# Documentation
-docs/*
-AGENTS.md
-CLAUDE.md
-GEMINI.md
-
-# Tooling metadata
+# IDE
 .vscode/*
-.worktrees/
-.codex/*
-.claude/*
-.gemini/*
-.serena/*
-.agent/*
-.agents/*
-.opencode/*
-.idea/*
-.beads/*
-.bmad/*
-_bmad/*
-_bmad-output/*
+.idea/
 
 # macOS
 .DS_Store
 ._*
+
+# Node modules
+node_modules/
+
+# Test output
+test-output
+
+# Dashboard v2 mock preview (dev only)
+mock-preview/
+
+# Superpowers plans
+docs/superpowers/
+
+# Local Claude files
+CLAUDE.md
