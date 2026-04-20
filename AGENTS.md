@@ -22,6 +22,20 @@ go build -o test-output ./cmd/server && rm test-output # Verify compile (REQUIRE
 - Auth material defaults under `auths/`
 - Storage backends: file-based default; optional Postgres/git/object store (`PGSTORE_*`, `GITSTORE_*`, `OBJECTSTORE_*`)
 
+## Fork Sync Workflow
+- Keep `main` as a clean mirror of `upstream/main`.
+- Keep local/custom work on a separate branch (current branch: `fork/local-customizations`).
+- To update from upstream without losing local work:
+  ```bash
+  git fetch upstream
+  git switch main
+  git reset --hard upstream/main
+  git switch fork/local-customizations
+  git rebase main
+  ```
+- If rebase conflicts, resolve them, `git add <files>`, then run `git rebase --continue`.
+- Do not commit local customization work directly to `main`.
+
 ## Architecture
 - `cmd/server/` — Server entrypoint
 - `internal/api/` — Gin HTTP API (routes, middleware, modules)
@@ -46,6 +60,9 @@ go build -o test-output ./cmd/server && rm test-output # Verify compile (REQUIRE
 - If editing code that already contains non-English comments, translate them to English (don’t add new non-English comments)
 - For user-visible strings, keep the existing language used in that file/area
 - New Markdown docs should be in English unless the file is explicitly language-specific (e.g. `README_CN.md`)
+- For management/dashboard fork work, prefer an overlay approach: keep UI-specific behavior in `cmd/console/static`, `internal/usage`, or adjacent new files instead of expanding core management APIs unless it is truly necessary.
+- For management settings UI, prefer reusing the existing `GET/PUT /v0/management/config.yaml` flow and editing YAML-compatible fields there rather than adding one-off backend endpoints in `internal/api/handlers/management/config_basic.go`.
+- Do not store console/usage helper state inside the auth directory in a way that can be mistaken for auth JSON files. Keep such files outside the auth file scan path.
 - As a rule, do not make standalone changes to `internal/translator/`. You may modify it only as part of broader changes elsewhere.
 - If a task requires changing only `internal/translator/`, run `gh repo view --json viewerPermission -q .viewerPermission` to confirm you have `WRITE`, `MAINTAIN`, or `ADMIN`. If you do, you may proceed; otherwise, file a GitHub issue including the goal, rationale, and the intended implementation code, then stop further work.
 - `internal/runtime/executor/` should contain executors and their unit tests only. Place any helper/supporting files under `internal/runtime/executor/helps/`.

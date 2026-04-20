@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CLI Proxy — Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div class="app">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo">
+        <div class="logo-mark"></div>
+        <span class="logo-text">CLI PROXY</span>
+      </div>
+      <nav class="nav">
+        <button class="nav-btn active" data-tab="dashboard">Dashboard</button>
+        <button class="nav-btn" data-tab="accounts">Accounts</button>
+        <button class="nav-btn" data-tab="apis">APIs</button>
+        <button class="nav-btn" data-tab="settings">Settings</button>
+      </nav>
+      <div class="header-actions">
+        <div class="status-indicator">
+          <div class="status-dot"></div>
+          <span id="active-accounts-count">0 Active</span>
+        </div>
+        <button class="btn" id="refresh-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" stroke-width="2">
+            <path d="M1 4v6h6M23 20v-6h-6"/>
+            <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
+          </svg>
+          Refresh
+        </button>
+      </div>
+    </header>
+
+    <!-- Dashboard Tab -->
+    <div class="tab-content active" id="dashboard-tab">
+      <!-- Metrics Bar -->
+      <section class="metrics-bar">
+        <div class="metric-card fade-in">
+          <div class="metric-icon">
+            <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          </div>
+          <div class="metric-info">
+            <div class="metric-label">Requests</div>
+            <div class="metric-value" id="metric-requests">--</div>
+            <div class="metric-trend" id="metric-requests-trend">--</div>
+          </div>
+        </div>
+        <div class="metric-card fade-in">
+          <div class="metric-icon">
+            <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6M9 13h6M9 17h4"/></svg>
+          </div>
+          <div class="metric-info">
+            <div class="metric-label">Tokens</div>
+            <div class="metric-value" id="metric-tokens">--</div>
+            <div class="metric-trend" id="metric-tokens-trend">--</div>
+          </div>
+        </div>
+        <div class="metric-card fade-in">
+          <div class="metric-icon">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          </div>
+          <div class="metric-info">
+            <div class="metric-label">Cost</div>
+            <div class="metric-value" id="metric-cost">--</div>
+            <div class="metric-trend" id="metric-cost-trend">--</div>
+          </div>
+        </div>
+        <div class="metric-card danger fade-in">
+          <div class="metric-icon">
+            <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </div>
+          <div class="metric-info">
+            <div class="metric-label">Errors</div>
+            <div class="metric-value" id="metric-errors">--</div>
+            <div class="metric-trend down" id="metric-errors-trend">--</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Quota Health -->
+      <section class="section quota-section">
+        <h2 class="section-title">Quota Health</h2>
+        <div class="quota-windows">
+          <div class="quota-window">
+            <div class="quota-window-header">
+              <span class="quota-window-label">5h Window</span>
+              <div class="quota-ring-small">
+                <svg viewBox="0 0 100 100">
+                  <circle class="quota-ring-bg" cx="50" cy="50" r="45"/>
+                  <circle class="quota-ring-fill" id="quota-5h-ring" cx="50" cy="50" r="45" data-progress="0"/>
+                </svg>
+                <div class="quota-ring-center">
+                  <div class="quota-ring-value" id="quota-5h-percent">0%</div>
+                  <div class="quota-ring-unit">used</div>
+                </div>
+              </div>
+              <span class="quota-remaining" id="quota-5h-remaining">-- left</span>
+            </div>
+            <div class="quota-legend" id="quota-5h-legend"></div>
+          </div>
+          <div class="quota-window">
+            <div class="quota-window-header">
+              <span class="quota-window-label">7d Window</span>
+              <div class="quota-ring-small">
+                <svg viewBox="0 0 100 100">
+                  <circle class="quota-ring-bg" cx="50" cy="50" r="45"/>
+                  <circle class="quota-ring-fill" id="quota-7d-ring" cx="50" cy="50" r="45" data-progress="0"/>
+                </svg>
+                <div class="quota-ring-center">
+                  <div class="quota-ring-value" id="quota-7d-percent">0%</div>
+                  <div class="quota-ring-unit">used</div>
+                </div>
+              </div>
+              <span class="quota-remaining" id="quota-7d-remaining">-- left</span>
+            </div>
+            <div class="quota-legend" id="quota-7d-legend"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Accounts Overview -->
+      <section class="section">
+        <h2 class="section-title">Accounts</h2>
+        <div class="accounts-grid" id="dashboard-accounts-grid"></div>
+      </section>
+
+      <!-- Request Log -->
+      <section class="logs-section">
+        <h2 class="section-title">Request Log</h2>
+        <div class="logs-controls">
+          <input type="text" class="logs-search" id="logs-search" placeholder="Search request ID, model, account...">
+          <select class="logs-filter" id="logs-account-filter"><option>All Accounts</option></select>
+          <select class="logs-filter" id="logs-status-filter"><option>All Status</option><option>Success</option><option>Error</option><option>Warning</option></select>
+        </div>
+        <table class="logs-table">
+          <thead>
+            <tr><th>ID</th><th>Account</th><th>Model</th><th>Transport</th><th>Latency</th><th>Status</th><th>Time</th><th>Message</th></tr>
+          </thead>
+          <tbody id="logs-body"></tbody>
+        </table>
+      </section>
+    </div>
+
+    <!-- Accounts Tab -->
+    <div class="tab-content" id="accounts-tab">
+      <div class="accounts-layout">
+        <!-- Sidebar -->
+        <div class="accounts-sidebar">
+          <div class="sidebar-header">
+            <span class="sidebar-title">Accounts</span>
+            <button class="btn btn-primary btn-sm" id="add-account-btn">
+              <svg viewBox="0 0 24 24" stroke-width="2" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add
+            </button>
+          </div>
+          <div class="search-box">
+            <input type="text" class="search-input" id="accounts-search" placeholder="Search accounts...">
+          </div>
+          <div class="accounts-count" id="accounts-count">0 accounts</div>
+          <div class="accounts-list" id="accounts-list"></div>
+        </div>
+
+        <!-- Detail Panel -->
+        <div class="detail-panel" id="account-detail-panel">
+          <div class="detail-empty">
+            <svg viewBox="0 0 24 24" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            <div class="detail-empty-title">Select an account</div>
+            <div class="detail-empty-hint">Choose an account from the list to view details</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- APIs Tab -->
+    <div class="tab-content" id="apis-tab">
+      <div class="section">
+        <h2 class="section-title">Available Models</h2>
+        <div class="models-grid" id="models-grid">
+          <div class="empty-state">
+            <div class="empty-state-icon">${icons.clock}</div>
+            <div class="empty-state-title">No models loaded</div>
+            <div class="empty-state-desc">Models will appear here when API accounts are configured.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings Tab -->
+    <div class="tab-content" id="settings-tab">
+      <div class="settings-page-header">
+        <h1 class="page-title">Settings</h1>
+        <p class="page-subtitle">Configure server behavior, routing, logging, and advanced options</p>
+      </div>
+
+      <div class="settings-layout">
+        <nav class="settings-nav" id="settings-nav">
+          <button class="settings-nav-item active" data-section="general">
+            <svg viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            General
+          </button>
+          <button class="settings-nav-item" data-section="server">
+            <svg viewBox="0 0 24 24" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+            Server
+          </button>
+          <button class="settings-nav-item" data-section="management">
+            <svg viewBox="0 0 24 24" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            Management
+          </button>
+          <button class="settings-nav-item" data-section="routing">
+            <svg viewBox="0 0 24 24" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            Routing
+          </button>
+          <button class="settings-nav-item" data-section="retry">
+            <svg viewBox="0 0 24 24" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            Retry
+          </button>
+          <button class="settings-nav-item" data-section="quota">
+            <svg viewBox="0 0 24 24" stroke-width="2"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+            Quota
+          </button>
+          <button class="settings-nav-item" data-section="logging">
+            <svg viewBox="0 0 24 24" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            Logging
+          </button>
+          <button class="settings-nav-item" data-section="advanced">
+            <svg viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+            Advanced
+          </button>
+        </nav>
+
+        <div class="settings-content">
+          <!-- GENERAL -->
+          <div class="settings-section" id="section-general">
+            <div class="section-header">
+              <div class="section-icon">
+                <svg viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+              </div>
+              <div>
+                <div class="section-title">General</div>
+                <div class="section-desc">Basic server configuration</div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">Debug Mode</div>
+                <div class="setting-desc">Enable verbose logging for troubleshooting</div>
+              </div>
+              <div class="setting-control">
+                <div class="toggle" id="toggle-debug" data-endpoint="/debug"></div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">Proxy URL</div>
+                <div class="setting-desc">Global HTTP proxy for all upstream requests (socks5/http/https)</div>
+              </div>
+              <div class="setting-control">
+                <input type="text" class="setting-input wide" id="input-proxy-url" placeholder="socks5://user:pass@host:port">
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">Commercial Mode</div>
+                <div class="setting-desc">Disable high-overhead features to minimize memory usage</div>
+              </div>
+              <div class="setting-control">
+                <div class="toggle" id="toggle-commercial" data-endpoint="/commercial-mode"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SERVER -->
+          <div class="settings-section" id="section-server">
+            <div class="section-header">
+              <div class="section-icon">
+                <svg viewBox="0 0 24 24" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+              </div>
+              <div>
+                <div class="section-title">Server</div>
+                <div class="section-desc">Network binding and TLS configuration (requires restart)</div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">Host</div>
+                <div class="setting-desc">Network interface to bind (empty = all interfaces)</div>
+              </div>
+              <div class="setting-control">
+                <input type="text" class="setting-input" id="input-host" placeholder="0.0.0.0">
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">Port</div>
+                <div class="setting-desc">TCP port for the API server</div>
+              </div>
+              <div class="setting-control">
+                <input type="number" class="setting-input" id="input-port" value="8317">
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">TLS Enabled</div>
+                <div class="setting-desc">Enable HTTPS with custom certificate</div>
+              </div>
+              <div class="setting-control">
+                <div class="toggle" id="toggle-tls" data-endpoint="/tls-enabled"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- MANAGEMENT -->
+          <div class="settings-section" id="section-management">
+            <div class="section-header">
+              <div class="section-icon">
+                <svg viewBox="0 0 24 24" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              </div>
+              <div>
+                <div class="section-title">Management API</div>
+                <div class="section-desc">Remote access and security settings</div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">Allow Remote Access</div>
+                <div class="setting-desc">Enable management API from non-localhost addresses</div>
+              </div>
+              <div class="setting-control">
+                <div class="toggle" id="toggle-remote" data-endpoint="/remote-management/allow-remote"></div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">Secret Key</div>
+                <div class="setting-desc">Password for remote management authentication</div>
+              </div>
+              <div class="setting-control">
+                <input type="password" class="setting-input" id="input-secret" placeholder="••••••••">
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">Control Panel</div>
+                <div class="setting-desc">Use built-in management web interface</div>
+              </div>
+              <div class="setting-control">
+                <div class="toggle active" id="toggle-panel" data-endpoint="/remote-management/control-panel-enabled"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ROUTING -->
+          <div class="settings-section" id="section-routing">
+            <div class="section-header">
+              <div class="section-icon">
+                <svg viewBox="0 0 24 24" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              </div>
+              <div>
+                <div class="section-title">Routing</div>
+                <div class="section-desc">Credential selection and request distribution</div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">Strategy</div>
+                <div class="setting-desc">How credentials are selected for requests</div>
+              </div>
+              <div class="setting-control">
+                <select class="setting-select" id="select-routing">
+                  <option value="round-robin">Round Robin</option>
+                  <option value="fill-first">Fill First</option>
+                </select>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">Session Affinity</div>
+                <div class="setting-desc">Route same session to same credential</div>
+              </div>
+              <div class="setting-control">
+                <div class="toggle" id="toggle-session" data-endpoint="/routing/session-affinity"></div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">Force Model Prefix</div>
+                <div class="setting-desc">Always apply credential prefix to model names</div>
+              </div>
+              <div class="setting-control">
+                <div class="toggle" id="toggle-force-prefix" data-endpoint="/force-model-prefix"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- RETRY -->
+          <div class="settings-section" id="section-retry">
+            <div class="section-header">
+              <div class="section-icon">
+                <svg viewBox="0 0 24 24" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              </div>
+              <div>
+                <div class="section-title">Retry</div>
+                <div class="section-desc">Request retry configuration</div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">Request Retry</div>
+                <div class="setting-desc">Number of retry attempts on request failure</div>
+              </div>
+              <div class="setting-control">
+                <input type="number" class="setting-input" id="input-retry" value="3" min="0" max="10">
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">Max Retry Interval</div>
+                <div class="setting-desc">Maximum wait time in seconds before retry</div>
+              </div>
+              <div class="setting-control">
+                <input type="number" class="setting-input" id="input-max-retry-interval" value="30" min="1">
+              </div>
+            </div>
+          </div>
+
+          <!-- QUOTA -->
+          <div class="settings-section" id="section-quota">
+            <div class="section-header">
+              <div class="section-icon">
+                <svg viewBox="0 0 24 24" stroke-width="2"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+              </div>
+              <div>
+                <div class="section-title">Quota Exceeded</div>
+                <div class="section-desc">Automatic failover when quota limits are hit</div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">Switch Project</div>
+                <div class="setting-desc">Automatically switch to another project when quota is exceeded</div>
+              </div>
+              <div class="setting-control">
+                <div class="toggle active" id="toggle-quota-project" data-endpoint="/quota-exceeded/switch-project"></div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">Switch Preview Model</div>
+                <div class="setting-desc">Automatically switch to preview model when quota is exceeded</div>
+              </div>
+              <div class="setting-control">
+                <div class="toggle active" id="toggle-quota-preview" data-endpoint="/quota-exceeded/switch-preview-model"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- LOGGING -->
+          <div class="settings-section" id="section-logging">
+            <div class="section-header">
+              <div class="section-icon">
+                <svg viewBox="0 0 24 24" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+              </div>
+              <div>
+                <div class="section-title">Logging</div>
+                <div class="section-desc">Request logging and error tracking configuration</div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">Log to File</div>
+                <div class="setting-desc">Write logs to rotating files instead of stdout</div>
+              </div>
+              <div class="setting-control">
+                <div class="toggle" id="toggle-logging" data-endpoint="/logging-to-file"></div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">Max Log Size (MB)</div>
+                <div class="setting-desc">Maximum total size of log files before cleanup</div>
+              </div>
+              <div class="setting-control">
+                <input type="number" class="setting-input" id="input-logs-max-size" value="0" min="0">
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">Error Log Files</div>
+                <div class="setting-desc">Maximum error log files to retain</div>
+              </div>
+              <div class="setting-control">
+                <input type="number" class="setting-input" id="input-error-logs-max" value="10" min="0">
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">Usage Statistics</div>
+                <div class="setting-desc">Track in-memory usage statistics</div>
+              </div>
+              <div class="setting-control">
+                <div class="toggle active" id="toggle-usage" data-endpoint="/usage-statistics-enabled"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ADVANCED -->
+          <div class="settings-section" id="section-advanced">
+            <div class="section-header">
+              <div class="section-icon">
+                <svg viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+              </div>
+              <div>
+                <div class="section-title">Advanced</div>
+                <div class="section-desc">WebSocket and compatibility settings</div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">WebSocket Auth</div>
+                <div class="setting-desc">Enable authentication for WebSocket API (/v1/ws)</div>
+              </div>
+              <div class="setting-control">
+                <div class="toggle" id="toggle-ws-auth" data-endpoint="/ws-auth"></div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">Passthrough Headers</div>
+                <div class="setting-desc">Forward upstream response headers to clients</div>
+              </div>
+              <div class="setting-control">
+                <div class="toggle" id="toggle-passthrough" data-endpoint="/passthrough-headers"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- APPEARANCE -->
+          <div class="settings-section" id="section-appearance">
+            <div class="section-header">
+              <div class="section-icon">
+                <svg viewBox="0 0 24 24" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+              </div>
+              <div>
+                <div class="section-title">Appearance</div>
+                <div class="section-desc">Dashboard look and feel</div>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info">
+                <div class="setting-label">Theme</div>
+                <div class="setting-desc">Choose interface appearance</div>
+              </div>
+              <div class="setting-control">
+                <div class="theme-switcher">
+                  <button class="theme-btn" data-theme="auto" title="Auto">
+                    <svg width="16" height="16" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+                  </button>
+                  <button class="theme-btn active" data-theme="dark" title="Dark">
+                    <svg width="16" height="16" viewBox="0 0 24 24" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                  </button>
+                  <button class="theme-btn" data-theme="light" title="Light">
+                    <svg width="16" height="16" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Account Modal -->
+  <div class="modal-overlay" id="add-account-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title">Add Account</div>
+        <button class="modal-close" id="modal-close">
+          <svg viewBox="0 0 24 24" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-steps">
+        <div class="modal-step active" id="step-1"></div>
+        <div class="modal-step" id="step-2"></div>
+        <div class="modal-step" id="step-3"></div>
+      </div>
+
+      <!-- Step 1: Provider Selection -->
+      <div class="modal-content" id="step-content-1" style="display: block;">
+        <div class="step-label">1. Choose provider</div>
+        <div class="provider-grid">
+          <button class="provider-btn" data-provider="anthropic">
+            <div class="provider-icon anthropic">AN</div>
+            <div class="provider-name">Anthropic</div>
+          </button>
+          <button class="provider-btn" data-provider="codex">
+            <div class="provider-icon codex">CX</div>
+            <div class="provider-name">Codex</div>
+          </button>
+          <button class="provider-btn" data-provider="gemini">
+            <div class="provider-icon gemini">GM</div>
+            <div class="provider-name">Gemini</div>
+          </button>
+          <button class="provider-btn" data-provider="kimi">
+            <div class="provider-icon kimi">KM</div>
+            <div class="provider-name">Kimi</div>
+          </button>
+          <button class="provider-btn" data-provider="antigravity">
+            <div class="provider-icon antigravity">AG</div>
+            <div class="provider-name">Antigravity</div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 2: OAuth or API Key -->
+      <div class="modal-content" id="step-content-2" style="display: none;">
+        <div class="step-label">2. Choose auth method</div>
+        <div class="auth-method-choice">
+          <button class="auth-method-btn" id="auth-oauth-btn">
+            <div class="auth-method-icon">
+              <svg viewBox="0 0 24 24" stroke-width="2" fill="none"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+            </div>
+            <div class="auth-method-name">OAuth</div>
+            <div class="auth-method-desc">Browser login</div>
+          </button>
+          <button class="auth-method-btn" id="auth-apikey-btn">
+            <div class="auth-method-icon">
+              <svg viewBox="0 0 24 24" stroke-width="2" fill="none"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+            </div>
+            <div class="auth-method-name">API Key</div>
+            <div class="auth-method-desc">Paste key</div>
+          </button>
+        </div>
+        <!-- OAuth Flow -->
+        <div class="oauth-section" id="oauth-flow" style="display: none;">
+          <div class="oauth-waiting">
+            <div class="oauth-spinner"></div>
+            <div class="oauth-waiting-title">Waiting for authorization...</div>
+            <div class="oauth-waiting-hint">Complete OAuth in your browser</div>
+          </div>
+          <div class="oauth-status pending" id="oauth-status" style="display: none;"></div>
+        </div>
+        <!-- API Key Input -->
+        <div class="oauth-section" id="apikey-flow" style="display: none;">
+          <div class="form-group">
+            <label class="form-label">API Key</label>
+            <input type="password" class="form-input" id="api-key-form" placeholder="sk-...">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Label (optional)</label>
+            <input type="text" class="form-input" id="api-key-label" placeholder="My Key">
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 3: Done -->
+      <div class="modal-content oauth-section" id="step-content-3">
+        <div class="oauth-waiting">
+          <div class="oauth-spinner" style="border-top-color: var(--signal);"></div>
+          <div class="oauth-waiting-title">Account Added!</div>
+          <div class="oauth-waiting-hint">Your account is ready to use</div>
+        </div>
+      </div>
+
+      <div class="modal-actions" id="modal-actions">
+        <button class="btn" id="modal-back" style="display: none;">Back</button>
+        <button class="btn btn-primary" id="modal-next">Continue</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
