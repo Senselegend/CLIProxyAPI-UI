@@ -1,10 +1,11 @@
 services:
   cli-proxy-api:
-    image: ${CLI_PROXY_IMAGE:-eceasy/cli-proxy-api:latest}
-    pull_policy: always
+    image: ${CLI_PROXY_API_IMAGE:-eceasy/cli-proxy-api:latest}
+    pull_policy: ${CLI_PROXY_API_PULL_POLICY:-always}
     build:
       context: .
       dockerfile: Dockerfile
+      target: api
       args:
         VERSION: ${VERSION:-dev}
         COMMIT: ${COMMIT:-none}
@@ -25,4 +26,21 @@ services:
       - ${CLI_PROXY_CONFIG_PATH:-./config.yaml}:/CLIProxyAPI/config.yaml
       - ${CLI_PROXY_AUTH_PATH:-./auths}:/root/.cli-proxy-api
       - ${CLI_PROXY_LOG_PATH:-./logs}:/CLIProxyAPI/logs
+    restart: unless-stopped
+
+  cli-console:
+    image: ${CLI_CONSOLE_IMAGE:-cli-console:local}
+    pull_policy: ${CLI_CONSOLE_PULL_POLICY:-never}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: console
+    container_name: cli-console
+    depends_on:
+      - cli-proxy-api
+    command: ["./cli-console", "--api", "cli-proxy-api:8317", "--config", "/CLIProxyAPI/config.yaml", "--port", "8318"]
+    ports:
+      - "8318:8318"
+    volumes:
+      - ${CLI_PROXY_CONFIG_PATH:-./config.yaml}:/CLIProxyAPI/config.yaml:ro
     restart: unless-stopped

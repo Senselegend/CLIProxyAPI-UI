@@ -28,10 +28,12 @@ static/app_shell_helpers.js
 # Authentication data
 auths/*
 !auths/.gitkeep
+~/
 
 # IDE
 .vscode/*
 .idea/
+.claude/
 
 # macOS
 .DS_Store
@@ -53,3 +55,6 @@ docs/superpowers/
 CLAUDE.md
 cli-console
 cmd/console/static_tests/*
+cmd/server/main_test.go
+internal/api/quota_autostart_test.go
+.gitignore
