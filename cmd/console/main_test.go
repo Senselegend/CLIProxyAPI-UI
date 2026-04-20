@@ -59,3 +59,51 @@ func TestProxyToAPIForwardsBodyAndHeaders(t *testing.T) {
 		t.Fatalf("management key = %q, want console-secret", gotKey)
 	}
 }
+
+func TestServeStaticRootIncludesFaviconLink(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+
+	serveStatic(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `<link rel="icon" type="image/svg+xml" href="/favicon.svg?v=8">`) {
+		t.Fatalf("root page missing favicon link: %s", body)
+	}
+}
+
+func TestServeStaticServesFaviconSVG(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/favicon.svg", nil)
+	rr := httptest.NewRecorder()
+
+	serveStatic(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if got := rr.Header().Get("Content-Type"); got != "image/svg+xml" {
+		t.Fatalf("content type = %q, want image/svg+xml", got)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `viewBox="0 0 64 64"`) {
+		t.Fatalf("favicon missing square svg viewBox: %s", body)
+	}
+	if !strings.Contains(body, `fill="#f8fafc"`) {
+		t.Fatalf("favicon missing light background tile: %s", body)
+	}
+	if !strings.Contains(body, `stroke="#6d28d9"`) {
+		t.Fatalf("favicon missing center dot outline: %s", body)
+	}
+	if !strings.Contains(body, `d="M14 32H31"`) {
+		t.Fatalf("favicon missing finalized left branch geometry: %s", body)
+	}
+	if !strings.Contains(body, `d="M31 32L49 14"`) {
+		t.Fatalf("favicon missing finalized upper branch geometry: %s", body)
+	}
+	if !strings.Contains(body, `d="M31 32L49 50"`) {
+		t.Fatalf("favicon missing finalized lower branch geometry: %s", body)
+	}
+}
