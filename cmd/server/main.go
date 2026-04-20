@@ -430,6 +430,8 @@ func main() {
 	// Set the log level based on the configuration.
 	util.SetLogLevel(cfg)
 
+	usage.StartUsagePersistence(cfg.AuthDir, 30*time.Second)
+
 	if resolvedAuthDir, errResolveAuthDir := util.ResolveAuthDir(cfg.AuthDir); errResolveAuthDir != nil {
 		log.Errorf("failed to resolve auth directory: %v", errResolveAuthDir)
 		return
