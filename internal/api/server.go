@@ -1098,6 +1098,11 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 	if dirSetter, ok := tokenStore.(interface{ SetBaseDir(string) }); ok {
 		dirSetter.SetBaseDir(cfg.AuthDir)
 	}
+	if GetQuotaStartupState() == startupStateNotStarted {
+		if err := RunStartupQuotaSync(context.Background()); err != nil {
+			log.Errorf("startup quota sync failed: %v", err)
+		}
+	}
 	authEntries := util.CountAuthFiles(context.Background(), tokenStore)
 	geminiAPIKeyCount := len(cfg.GeminiKey)
 	claudeAPIKeyCount := len(cfg.ClaudeKey)

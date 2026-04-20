@@ -19,6 +19,7 @@
     quotaStartupSync: null
   };
   let detailCountdownTimer = null;
+  let startupSyncPollTimer = null;
 
   // Icons
   const icons = {
@@ -745,6 +746,21 @@
     }, 60000);
   }
 
+  function updateStartupSyncPolling() {
+    if (isQuotaStartupSyncing()) {
+      if (startupSyncPollTimer) return;
+      startupSyncPollTimer = setInterval(() => {
+        loadAccounts();
+      }, 3000);
+      return;
+    }
+
+    if (startupSyncPollTimer) {
+      clearInterval(startupSyncPollTimer);
+      startupSyncPollTimer = null;
+    }
+  }
+
   // Load accounts
   async function loadAccounts() {
     const [authData, quotaData] = await Promise.all([
@@ -802,6 +818,7 @@
     if (state.usage && state.usage.apis) {
       updateQuotaRings(state.usage.apis, state.quotaSummary);
     }
+    updateStartupSyncPolling();
   }
 
   // Render accounts on dashboard
