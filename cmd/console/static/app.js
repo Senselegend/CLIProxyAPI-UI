@@ -3,6 +3,8 @@
   'use strict';
 
   const API_BASE = '/v0/management';
+  const LOGS_CACHE_KEY = 'dashboard-request-activity-cache';
+  const LOGS_CACHE_LIMIT = 200;
 
   // State
   let state = {
@@ -438,6 +440,7 @@
   // Load all dashboard data
   async function loadData() {
     showLoadingState();
+    restoreCachedLogs();
     await Promise.all([
       loadUsage(),
       loadAccounts(),
@@ -1387,12 +1390,52 @@
     }
   }
 
+  function restoreCachedLogs() {
+    try {
+      const raw = localStorage.getItem(LOGS_CACHE_KEY);
+      if (!raw) return;
+      const cached = JSON.parse(raw);
+      if (!Array.isArray(cached) || cached.length === 0) return;
+      state.logs = cached;
+      renderLogs(state.logs);
+    } catch (error) {
+      console.warn('Failed to restore cached logs:', error);
+    }
+  }
+
+  function persistLogs(logs) {
+    try {
+      if (!Array.isArray(logs) || logs.length === 0) {
+        localStorage.removeItem(LOGS_CACHE_KEY);
+        return;
+      }
+      localStorage.setItem(LOGS_CACHE_KEY, JSON.stringify(logs.slice(0, LOGS_CACHE_LIMIT)));
+    } catch (error) {
+      console.warn('Failed to persist logs cache:', error);
+    }
+  }
+
+  function mergeLogsWithCache(logs) {
+    const merged = [];
+    const seen = new Set();
+    const cached = Array.isArray(state.logs) ? state.logs : [];
+    for (const log of [...logs, ...cached]) {
+      if (!log || !log.id) continue;
+      if (seen.has(log.id)) continue;
+      seen.add(log.id);
+      merged.push(log);
+      if (merged.length >= LOGS_CACHE_LIMIT) break;
+    }
+    return merged;
+  }
+
   // Load logs
   async function loadLogs() {
     const activityData = await apiFetch('/request-activity?limit=50');
     const activityLogs = normalizeActivityEntries(activityData);
     if (activityLogs.length > 0) {
-      state.logs = activityLogs;
+      state.logs = mergeLogsWithCache(activityLogs);
+      persistLogs(state.logs);
       renderLogs(state.logs);
       return;
     }
@@ -1401,11 +1444,14 @@
     const lineLogs = normalizeLogLines(data);
     if (lineLogs.length === 0) {
       console.log('Logs unavailable:', data?.error || 'No data');
-      renderEmptyLogs();
+      if (!state.logs || state.logs.length === 0) {
+        renderEmptyLogs();
+      }
       return;
     }
 
-    state.logs = lineLogs;
+    state.logs = mergeLogsWithCache(lineLogs);
+    persistLogs(state.logs);
     renderLogs(state.logs);
   }
 
