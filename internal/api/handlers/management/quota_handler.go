@@ -7,6 +7,20 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 )
 
+var (
+	quotaStartupStateGetter   = func() string { return "" }
+	quotaStartupMessageGetter = func() string { return "" }
+)
+
+func SetQuotaStartupGetters(stateGetter, messageGetter func() string) {
+	if stateGetter != nil {
+		quotaStartupStateGetter = stateGetter
+	}
+	if messageGetter != nil {
+		quotaStartupMessageGetter = messageGetter
+	}
+}
+
 // GetQuotas returns all account quotas plus aggregate summaries.
 func (h *Handler) GetQuotas(c *gin.Context) {
 	quotas := usage.GetQuotaStore().Snapshot()
@@ -17,6 +31,10 @@ func (h *Handler) GetQuotas(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"quotas":  quotas,
 		"summary": summary,
+		"startup_sync": gin.H{
+			"state":   quotaStartupStateGetter(),
+			"message": quotaStartupMessageGetter(),
+		},
 	})
 }
 

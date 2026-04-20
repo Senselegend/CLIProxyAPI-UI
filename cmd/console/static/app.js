@@ -15,7 +15,8 @@
     usage: null,
     logs: [],
     settings: {},
-    quotaSummary: null
+    quotaSummary: null,
+    quotaStartupSync: null
   };
   let detailCountdownTimer = null;
 
@@ -540,22 +541,23 @@
 
   // Update quota rings
   function updateQuotaRings(apis, quotaSummary) {
-    const fivehPercent = quotaSummary ? Math.round(quotaSummary.primary_used_percent) : 0;
-    const sevendPercent = quotaSummary ? Math.round(quotaSummary.secondary_used_percent) : 0;
+    const syncing = isQuotaStartupSyncing() && !quotaSummary;
+    const fivehPercent = syncing ? null : (quotaSummary ? Math.round(quotaSummary.primary_used_percent) : 0);
+    const sevendPercent = syncing ? null : (quotaSummary ? Math.round(quotaSummary.secondary_used_percent) : 0);
 
     const apiKeys = apis && Object.keys(apis);
     const totalRequests = apiKeys ? apiKeys.reduce((sum, key) => sum + (apis[key].total_requests || 0), 0) : 0;
     const totalTokens = apiKeys ? apiKeys.reduce((sum, key) => sum + (apis[key].total_tokens || 0), 0) : 0;
 
-    document.getElementById('quota-5h-percent').textContent = fivehPercent + '%';
-    document.getElementById('quota-5h-remaining').textContent = formatNumber(totalRequests) + ' reqs';
+    document.getElementById('quota-5h-percent').textContent = fivehPercent == null ? 'syncing' : (fivehPercent + '%');
+    document.getElementById('quota-5h-remaining').textContent = syncing ? 'warming up' : (formatNumber(totalRequests) + ' reqs');
 
-    animateRing(document.getElementById('quota-5h-ring'), fivehPercent);
+    animateRing(document.getElementById('quota-5h-ring'), fivehPercent == null ? 0 : fivehPercent);
 
-    document.getElementById('quota-7d-percent').textContent = sevendPercent + '%';
-    document.getElementById('quota-7d-remaining').textContent = formatNumber(totalTokens) + ' tokens';
+    document.getElementById('quota-7d-percent').textContent = sevendPercent == null ? 'syncing' : (sevendPercent + '%');
+    document.getElementById('quota-7d-remaining').textContent = syncing ? 'warming up' : (formatNumber(totalTokens) + ' tokens');
 
-    animateRing(document.getElementById('quota-7d-ring'), sevendPercent);
+    animateRing(document.getElementById('quota-7d-ring'), sevendPercent == null ? 0 : sevendPercent);
 
     if (apiKeys && apiKeys.length > 0) {
       renderQuotaLegend('quota-5h-legend', apiKeys.map((key, i) => ({
@@ -620,12 +622,34 @@
     return (resetAt * 1000) > Date.now();
   }
 
+  function isQuotaStartupSyncing() {
+    return state.quotaStartupSync && state.quotaStartupSync.state === 'syncing';
+  }
+
+  function getStartupSyncAccountStatus(file, quota) {
+    if (!isQuotaStartupSyncing()) return null;
+    const hasQuotaData = Boolean(quota && (quota.primary_window || quota.secondary_window || quota.fetch_error));
+    if (hasQuotaData) return null;
+
+    const backendStatus = String(file?.status || '').trim().toLowerCase();
+    if (file?.disabled || backendStatus === 'disabled') {
+      return null;
+    }
+
+    return { key: 'refreshing', label: 'syncing' };
+  }
+
   function deriveAccountStatus(file, quota) {
     const backendStatus = String(file?.status || '').trim().toLowerCase();
     const statusMessage = String(file?.status_message || '').trim().toLowerCase();
 
     if (file?.disabled || backendStatus === 'disabled') {
       return { key: 'paused', label: 'paused' };
+    }
+
+    const startupSyncStatus = getStartupSyncAccountStatus(file, quota);
+    if (startupSyncStatus) {
+      return startupSyncStatus;
     }
 
     if (file?.unavailable && hasFutureRetry(file?.next_retry_after)) {
@@ -654,7 +678,9 @@
 
   function formatResetCountdown(resetAt) {
     const unixSeconds = Number(resetAt) || 0;
-    if (unixSeconds <= 0) return 'n/a';
+    if (unixSeconds <= 0) {
+      return isQuotaStartupSyncing() ? 'syncing' : 'n/a';
+    }
 
     const diffMs = (unixSeconds * 1000) - Date.now();
     if (diffMs <= 0) return 'ready';
@@ -667,6 +693,24 @@
     if (days > 0) return `${days}d ${hours}h`;
     if (hours > 0) return `${hours}h ${minutes}m`;
     return `${minutes}m`;
+  }
+
+  function getUsageDisplayValue(usedPercent) {
+    if (usedPercent == null && isQuotaStartupSyncing()) {
+      return { percent: null, label: 'syncing' };
+    }
+
+    const safePercent = Math.max(0, Math.min(100, Number(usedPercent) || 0));
+    return { percent: safePercent, label: safePercent + '%' };
+  }
+
+  function getRemainingQuotaDisplay(usedPercent) {
+    if (usedPercent == null && isQuotaStartupSyncing()) {
+      return { percent: null, label: 'syncing', color: 'var(--accent)' };
+    }
+
+    const remaining = Math.max(0, 100 - (Number(usedPercent) || 0));
+    return { percent: remaining, label: remaining + '%', color: getQuotaColor(remaining) };
   }
 
   function renderResetCountdowns(acc) {
@@ -709,6 +753,8 @@
     ]);
     if (!authData || !authData.files) return;
 
+    state.quotaStartupSync = quotaData && quotaData.startup_sync ? quotaData.startup_sync : null;
+
     // Build quota map for quick lookup
     const quotaMap = {};
     if (quotaData && quotaData.quotas) {
@@ -723,9 +769,8 @@
 
     state.accounts = authData.files.map((file, i) => {
       const quota = quotaMap[file.name] || {};
-      // Use real quota data from API, fallback to 0
-      const primaryUsed = quota.primary_window?.used_percent || 0;
-      const secondaryUsed = quota.secondary_window?.used_percent || 0;
+      const primaryUsed = quota.primary_window?.used_percent;
+      const secondaryUsed = quota.secondary_window?.used_percent;
 
       const accountStatus = deriveAccountStatus(file, quota);
 
@@ -869,6 +914,9 @@
     const totalTokens = usage ? usage.total_tokens || 0 : 0;
     const failedReqs = usage ? usage.failure_count || 0 : 0;
 
+    const primaryUsage = getUsageDisplayValue(acc.primaryUsed);
+    const secondaryUsage = getUsageDisplayValue(acc.secondaryUsed);
+
     panel.innerHTML = `
       <div class="detail-header">
         <div>
@@ -886,20 +934,20 @@
           <div class="usage-block">
             <div class="usage-header">
               <span class="usage-label">5h</span>
-              <span class="usage-value">${acc.primaryUsed}%</span>
+              <span class="usage-value">${primaryUsage.label}</span>
             </div>
             <div class="usage-bar">
-              <div class="usage-bar-fill" style="width: ${acc.primaryUsed}%"></div>
+              <div class="usage-bar-fill" style="width: ${primaryUsage.percent || 0}%"></div>
             </div>
             <div class="usage-meta">${formatNumber(totalRequests)} req · ${formatTokens(totalTokens)} tok</div>
           </div>
           <div class="usage-block">
             <div class="usage-header">
               <span class="usage-label">7d</span>
-              <span class="usage-value">${acc.secondaryUsed}%</span>
+              <span class="usage-value">${secondaryUsage.label}</span>
             </div>
             <div class="usage-bar">
-              <div class="usage-bar-fill secondary" style="width: ${acc.secondaryUsed}%"></div>
+              <div class="usage-bar-fill secondary" style="width: ${secondaryUsage.percent || 0}%"></div>
             </div>
             <div class="usage-meta">${formatNumber(totalRequests)} req · ${formatTokens(totalTokens)} tok</div>
           </div>
@@ -940,6 +988,9 @@
 
   // Render account card
   function renderAccountCard(acc, showDetails = false) {
+    const primaryRemaining = getRemainingQuotaDisplay(acc.primaryUsed);
+    const secondaryRemaining = getRemainingQuotaDisplay(acc.secondaryUsed);
+
     return `
       <div class="account-card">
         <div class="account-header">
@@ -956,16 +1007,16 @@
           <div class="account-quota-row">
             <span class="account-quota-label">5h</span>
             <div class="account-quota-bar">
-              <div class="account-quota-fill primary" style="width: ${Math.max(0, 100 - (Number(acc.primaryUsed) || 0))}%; background-color: ${getQuotaColor(Math.max(0, 100 - (Number(acc.primaryUsed) || 0)))}"></div>
+              <div class="account-quota-fill primary" style="width: ${primaryRemaining.percent || 0}%; background-color: ${primaryRemaining.color}"></div>
             </div>
-            <span class="account-quota-value" style="color: ${getQuotaColor(Math.max(0, 100 - (Number(acc.primaryUsed) || 0)))}">${Math.max(0, 100 - (Number(acc.primaryUsed) || 0))}%</span>
+            <span class="account-quota-value" style="color: ${primaryRemaining.color}">${primaryRemaining.label}</span>
           </div>
           <div class="account-quota-row">
             <span class="account-quota-label">7d</span>
             <div class="account-quota-bar">
-              <div class="account-quota-fill secondary" style="width: ${Math.max(0, 100 - (Number(acc.secondaryUsed) || 0))}%; background-color: ${getQuotaColor(Math.max(0, 100 - (Number(acc.secondaryUsed) || 0)))}"></div>
+              <div class="account-quota-fill secondary" style="width: ${secondaryRemaining.percent || 0}%; background-color: ${secondaryRemaining.color}"></div>
             </div>
-            <span class="account-quota-value" style="color: ${getQuotaColor(Math.max(0, 100 - (Number(acc.secondaryUsed) || 0)))}">${Math.max(0, 100 - (Number(acc.secondaryUsed) || 0))}%</span>
+            <span class="account-quota-value" style="color: ${secondaryRemaining.color}">${secondaryRemaining.label}</span>
           </div>
         </div>
         <div class="account-footer">
