@@ -16,7 +16,7 @@ import (
 	_ "github.com/router-for-me/CLIProxyAPI/v6/internal/redisqueue"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/runtime/executor"
-	_ "github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
+	internalusage "github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/watcher"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/wsrelay"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v6/sdk/access"
@@ -786,6 +786,13 @@ func (s *Service) Shutdown(ctx context.Context) error {
 				if shutdownErr == nil {
 					shutdownErr = err
 				}
+			}
+		}
+
+		if errFlushUsage := internalusage.FlushDefaultAccountUsage(); errFlushUsage != nil {
+			log.Errorf("failed to flush account usage: %v", errFlushUsage)
+			if shutdownErr == nil {
+				shutdownErr = errFlushUsage
 			}
 		}
 

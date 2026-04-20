@@ -18,7 +18,6 @@ import (
 
 	"github.com/joho/godotenv"
 	configaccess "github.com/router-for-me/CLIProxyAPI/v6/internal/access/config_access"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/api"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/buildinfo"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/cmd"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
@@ -54,19 +53,6 @@ func init() {
 // main is the entry point of the application.
 // It parses command-line flags, loads configuration, and starts the appropriate
 // service based on the provided flags (login, codex-login, or server mode).
-func shouldRunStartupQuotaSync(vertexImport string, login, antigravityLogin, codexLogin, codexDeviceLogin, claudeLogin, kimiLogin, tuiMode, standalone, cloudDeployStandby bool) bool {
-	if vertexImport != "" || login || antigravityLogin || codexLogin || codexDeviceLogin || claudeLogin || kimiLogin {
-		return false
-	}
-	if tuiMode && !standalone {
-		return false
-	}
-	if cloudDeployStandby {
-		return false
-	}
-	return true
-}
-
 func main() {
 	fmt.Printf("CLIProxyAPI Version: %s, Commit: %s, BuiltAt: %s\n", buildinfo.Version, buildinfo.Commit, buildinfo.BuildDate)
 
@@ -469,13 +455,6 @@ func main() {
 		sdkAuth.RegisterTokenStore(gitStoreInst)
 	} else {
 		sdkAuth.RegisterTokenStore(sdkAuth.NewFileTokenStore())
-	}
-
-	if shouldRunStartupQuotaSync(vertexImport, login, antigravityLogin, codexLogin, codexDeviceLogin, claudeLogin, kimiLogin, tuiMode, standalone, isCloudDeploy && !configFileExists) {
-		if err = api.RunStartupQuotaSync(context.Background()); err != nil {
-			log.Errorf("startup quota sync failed: %v", err)
-			return
-		}
 	}
 
 	// Register built-in access providers before constructing services.

@@ -36,6 +36,9 @@ const accountUsageStorageDirSuffix = ".usage"
 
 func GetAccountUsageStore() *AccountUsageStore { return defaultAccountUsageStore }
 
+// FlushDefaultAccountUsage persists the shared account usage store immediately.
+func FlushDefaultAccountUsage() error { return GetAccountUsageStore().Persist() }
+
 // SetStorageDir configures the directory for persisting usage stats.
 func (s *AccountUsageStore) SetStorageDir(dir string) { s.storageDir = dir }
 
