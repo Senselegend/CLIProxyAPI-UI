@@ -5,6 +5,39 @@ import (
 	"testing"
 )
 
+func TestManager_Update_PreservesDeactivatedStatus(t *testing.T) {
+	m := NewManager(nil, nil, nil)
+
+	if _, err := m.Register(context.Background(), &Auth{
+		ID:            "auth-deactivated",
+		Provider:      "codex",
+		Status:        StatusActive,
+		StatusMessage: "healthy",
+	}); err != nil {
+		t.Fatalf("register auth: %v", err)
+	}
+
+	if _, err := m.Update(context.Background(), &Auth{
+		ID:            "auth-deactivated",
+		Provider:      "codex",
+		Status:        StatusDeactivated,
+		StatusMessage: "revoked_token",
+	}); err != nil {
+		t.Fatalf("update auth: %v", err)
+	}
+
+	updated, ok := m.GetByID("auth-deactivated")
+	if !ok || updated == nil {
+		t.Fatalf("expected auth to be present")
+	}
+	if updated.Status != StatusDeactivated {
+		t.Fatalf("Status = %q, want %q", updated.Status, StatusDeactivated)
+	}
+	if updated.StatusMessage != "revoked_token" {
+		t.Fatalf("StatusMessage = %q, want %q", updated.StatusMessage, "revoked_token")
+	}
+}
+
 func TestManager_Update_PreservesModelStates(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 
