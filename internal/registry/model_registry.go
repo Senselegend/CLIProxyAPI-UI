@@ -47,6 +47,8 @@ type ModelInfo struct {
 	MaxCompletionTokens int `json:"max_completion_tokens,omitempty"`
 	// SupportedParameters lists supported parameters
 	SupportedParameters []string `json:"supported_parameters,omitempty"`
+	// AdditionalSpeedTiers lists extra client-visible speed tiers supported by the model.
+	AdditionalSpeedTiers []string `json:"additional_speed_tiers,omitempty"`
 	// SupportedInputModalities lists supported input modalities (e.g., TEXT, IMAGE, VIDEO, AUDIO)
 	SupportedInputModalities []string `json:"supportedInputModalities,omitempty"`
 	// SupportedOutputModalities lists supported output modalities (e.g., TEXT, IMAGE)
@@ -530,6 +532,9 @@ func cloneModelInfo(model *ModelInfo) *ModelInfo {
 	}
 	if len(model.SupportedParameters) > 0 {
 		copyModel.SupportedParameters = append([]string(nil), model.SupportedParameters...)
+	}
+	if len(model.AdditionalSpeedTiers) > 0 {
+		copyModel.AdditionalSpeedTiers = append([]string(nil), model.AdditionalSpeedTiers...)
 	}
 	if len(model.SupportedInputModalities) > 0 {
 		copyModel.SupportedInputModalities = append([]string(nil), model.SupportedInputModalities...)
@@ -1140,6 +1145,9 @@ func (r *ModelRegistry) convertModelToMap(model *ModelInfo, handlerType string) 
 		}
 		if len(model.SupportedParameters) > 0 {
 			result["supported_parameters"] = append([]string(nil), model.SupportedParameters...)
+		}
+		if len(model.AdditionalSpeedTiers) > 0 {
+			result["additional_speed_tiers"] = append([]string(nil), model.AdditionalSpeedTiers...)
 		}
 		return result
 

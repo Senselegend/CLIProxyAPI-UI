@@ -124,8 +124,10 @@ func tryRefreshModels(ctx context.Context, label string) {
 	// Detect changes before updating store.
 	changed := detectChangedProviders(oldData, parsed)
 
-	// Update store with new data regardless.
+	// Update store with new data regardless, but keep locally known metadata
+	// when the remote catalog has not learned it yet.
 	modelsCatalogStore.mu.Lock()
+	preserveAdditionalSpeedTiers(modelsCatalogStore.data, parsed)
 	modelsCatalogStore.data = parsed
 	modelsCatalogStore.mu.Unlock()
 
@@ -304,9 +306,52 @@ func loadModelsFromBytes(data []byte, source string) error {
 	}
 
 	modelsCatalogStore.mu.Lock()
-	modelsCatalogStore.data = &parsed
+	parsedPtr := &parsed
+	preserveAdditionalSpeedTiers(modelsCatalogStore.data, parsedPtr)
+	modelsCatalogStore.data = parsedPtr
 	modelsCatalogStore.mu.Unlock()
 	return nil
+}
+
+func preserveAdditionalSpeedTiers(current, incoming *staticModelsJSON) {
+	if current == nil || incoming == nil {
+		return
+	}
+
+	preserveAdditionalSpeedTiersForSection(current.Claude, incoming.Claude)
+	preserveAdditionalSpeedTiersForSection(current.Gemini, incoming.Gemini)
+	preserveAdditionalSpeedTiersForSection(current.Vertex, incoming.Vertex)
+	preserveAdditionalSpeedTiersForSection(current.GeminiCLI, incoming.GeminiCLI)
+	preserveAdditionalSpeedTiersForSection(current.AIStudio, incoming.AIStudio)
+	preserveAdditionalSpeedTiersForSection(current.CodexFree, incoming.CodexFree)
+	preserveAdditionalSpeedTiersForSection(current.CodexTeam, incoming.CodexTeam)
+	preserveAdditionalSpeedTiersForSection(current.CodexPlus, incoming.CodexPlus)
+	preserveAdditionalSpeedTiersForSection(current.CodexPro, incoming.CodexPro)
+	preserveAdditionalSpeedTiersForSection(current.Kimi, incoming.Kimi)
+	preserveAdditionalSpeedTiersForSection(current.Antigravity, incoming.Antigravity)
+}
+
+func preserveAdditionalSpeedTiersForSection(current, incoming []*ModelInfo) {
+	if len(current) == 0 || len(incoming) == 0 {
+		return
+	}
+
+	currentByID := make(map[string]*ModelInfo, len(current))
+	for _, model := range current {
+		if model == nil || model.ID == "" || len(model.AdditionalSpeedTiers) == 0 {
+			continue
+		}
+		currentByID[model.ID] = model
+	}
+
+	for _, model := range incoming {
+		if model == nil || model.ID == "" || len(model.AdditionalSpeedTiers) > 0 {
+			continue
+		}
+		if existing := currentByID[model.ID]; existing != nil {
+			model.AdditionalSpeedTiers = append([]string(nil), existing.AdditionalSpeedTiers...)
+		}
+	}
 }
 
 func getModels() *staticModelsJSON {

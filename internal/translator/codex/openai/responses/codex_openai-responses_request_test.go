@@ -364,3 +364,66 @@ func TestTruncationRemovedForCodexCompatibility(t *testing.T) {
 		t.Fatalf("truncation should be removed for Codex compatibility")
 	}
 }
+
+func TestConvertOpenAIResponsesRequestToCodex_PreservesFastServiceTier(t *testing.T) {
+	inputJSON := []byte(`{
+		"model": "gpt-5.4",
+		"service_tier": "fast",
+		"input": [{"role":"user","content":"hello"}]
+	}`)
+
+	output := ConvertOpenAIResponsesRequestToCodex("gpt-5.4", inputJSON, false)
+	if got := gjson.GetBytes(output, "service_tier").String(); got != "fast" {
+		t.Fatalf("service_tier = %q, want %q: %s", got, "fast", string(output))
+	}
+}
+
+func TestConvertOpenAIResponsesRequestToCodex_PreservesPriorityServiceTier(t *testing.T) {
+	inputJSON := []byte(`{
+		"model": "gpt-5.4",
+		"service_tier": "priority",
+		"input": [{"role":"user","content":"hello"}]
+	}`)
+
+	output := ConvertOpenAIResponsesRequestToCodex("gpt-5.4", inputJSON, false)
+	if got := gjson.GetBytes(output, "service_tier").String(); got != "priority" {
+		t.Fatalf("service_tier = %q, want %q: %s", got, "priority", string(output))
+	}
+}
+
+func TestConvertOpenAIResponsesRequestToCodex_StripsUnknownServiceTier(t *testing.T) {
+	inputJSON := []byte(`{
+		"model": "gpt-5.4",
+		"service_tier": "default",
+		"input": [{"role":"user","content":"hello"}],
+		"temperature": 0.2,
+		"top_p": 0.8,
+		"max_output_tokens": 128,
+		"max_completion_tokens": 128,
+		"user": "test-user",
+		"truncation": "disabled"
+	}`)
+
+	output := ConvertOpenAIResponsesRequestToCodex("gpt-5.4", inputJSON, false)
+	if gjson.GetBytes(output, "service_tier").Exists() {
+		t.Fatalf("service_tier should be stripped, got %s", string(output))
+	}
+	if gjson.GetBytes(output, "temperature").Exists() {
+		t.Fatalf("temperature should still be stripped, got %s", string(output))
+	}
+	if gjson.GetBytes(output, "top_p").Exists() {
+		t.Fatalf("top_p should still be stripped, got %s", string(output))
+	}
+	if gjson.GetBytes(output, "max_output_tokens").Exists() {
+		t.Fatalf("max_output_tokens should still be stripped, got %s", string(output))
+	}
+	if gjson.GetBytes(output, "max_completion_tokens").Exists() {
+		t.Fatalf("max_completion_tokens should still be stripped, got %s", string(output))
+	}
+	if gjson.GetBytes(output, "user").Exists() {
+		t.Fatalf("user should still be stripped, got %s", string(output))
+	}
+	if gjson.GetBytes(output, "truncation").Exists() {
+		t.Fatalf("truncation should still be stripped, got %s", string(output))
+	}
+}
