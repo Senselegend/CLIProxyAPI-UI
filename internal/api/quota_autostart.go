@@ -188,6 +188,11 @@ func (a *authAdapter) GetAccountID() string {
 	if a.auth == nil {
 		return ""
 	}
+	if a.auth.Metadata != nil {
+		if accountID, ok := a.auth.Metadata["account_id"].(string); ok && accountID != "" {
+			return accountID
+		}
+	}
 	return a.auth.ID
 }
 
