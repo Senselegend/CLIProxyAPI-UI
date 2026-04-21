@@ -10,6 +10,8 @@ const {
   filterLogs,
   setLogVisibleCount,
   setLogsForTest,
+  computeQuotaSummaryFromQuotas,
+  resolveAccountUsage,
 } = require('./app.js');
 
 function escapeHtmlForStub(value) {
@@ -216,6 +218,108 @@ test('normalizeActivityEntries hides request activity entries without accounts',
 
   assert.equal(rows.length, 1);
   assert.equal(rows[0].account, 'user@example.com');
+});
+
+test('computeQuotaSummaryFromQuotas averages lower-usage accounts into used percent totals', () => {
+  const summary = computeQuotaSummaryFromQuotas([
+    {
+      primary_window: { used_percent: 100 },
+      secondary_window: { used_percent: 100 },
+    },
+    {
+      primary_window: { used_percent: 34 },
+      secondary_window: { used_percent: 34 },
+    },
+  ]);
+
+  assert.deepEqual(summary, {
+    primary_used_percent: 67,
+    secondary_used_percent: 67,
+  });
+});
+
+test('computeQuotaSummaryFromQuotas ignores missing windows when averaging used percent totals', () => {
+  const summary = computeQuotaSummaryFromQuotas([
+    {
+      primary_window: { used_percent: 100 },
+    },
+    {
+      secondary_window: { used_percent: 34 },
+    },
+    {
+      primary_window: { used_percent: 34 },
+      secondary_window: { used_percent: 100 },
+    },
+  ]);
+
+  assert.deepEqual(summary, {
+    primary_used_percent: 67,
+    secondary_used_percent: 67,
+  });
+});
+
+test('computeQuotaSummaryFromQuotas returns zero used percent totals when no usable data exists', () => {
+  const summary = computeQuotaSummaryFromQuotas([
+    {},
+    null,
+    { primary_window: null, secondary_window: {} },
+  ]);
+
+  assert.deepEqual(summary, {
+    primary_used_percent: 0,
+    secondary_used_percent: 0,
+  });
+});
+
+test('resolveAccountUsage does not fuzzy-match email prefixes', () => {
+  const state = {
+    usage: {
+      apis: {
+        'jacquelinebevins2@outlook.com': { total_requests: 11, total_tokens: 1100 },
+        'jacquelinebevins@outlook.com': { total_requests: 7, total_tokens: 700 },
+      },
+    },
+  };
+  const acc = {
+    id: 'jacquelinebevins25.json',
+    email: 'jacquelinebevins25@outlook.com',
+  };
+
+  assert.equal(resolveAccountUsage(state, acc), null);
+});
+
+test('resolveAccountUsage returns usage for an exact email match', () => {
+  const expectedUsage = { total_requests: 13, total_tokens: 1300 };
+  const state = {
+    usage: {
+      apis: {
+        'jacquelinebevins25@outlook.com': expectedUsage,
+      },
+    },
+  };
+  const acc = {
+    id: 'jacquelinebevins25.json',
+    email: 'jacquelinebevins25@outlook.com',
+  };
+
+  assert.equal(resolveAccountUsage(state, acc), expectedUsage);
+});
+
+test('resolveAccountUsage returns usage for an exact account id match', () => {
+  const expectedUsage = { total_requests: 17, total_tokens: 1700 };
+  const state = {
+    usage: {
+      apis: {
+        'jacquelinebevins25.json': expectedUsage,
+      },
+    },
+  };
+  const acc = {
+    id: 'jacquelinebevins25.json',
+    email: 'jacquelinebevins25@outlook.com',
+  };
+
+  assert.equal(resolveAccountUsage(state, acc), expectedUsage);
 });
 
 test('getVisibleLogs returns newest 50 rows by default', () => {
