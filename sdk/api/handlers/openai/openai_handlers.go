@@ -80,6 +80,11 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 			filteredModel["owned_by"] = ownedBy
 		}
 
+		// Preserve additional_speed_tiers for clients that detect fast-capable models via /v1/models.
+		if additionalSpeedTiers, exists := model["additional_speed_tiers"]; exists {
+			filteredModel["additional_speed_tiers"] = additionalSpeedTiers
+		}
+
 		filteredModels[i] = filteredModel
 	}
 
@@ -134,13 +139,7 @@ func shouldTreatAsResponsesFormat(rawJSON []byte) bool {
 	if gjson.GetBytes(rawJSON, "messages").Exists() {
 		return false
 	}
-	if gjson.GetBytes(rawJSON, "input").Exists() {
-		return true
-	}
-	if gjson.GetBytes(rawJSON, "instructions").Exists() {
-		return true
-	}
-	return false
+	return gjson.GetBytes(rawJSON, "input").Exists()
 }
 
 // Completions handles the /v1/completions endpoint.

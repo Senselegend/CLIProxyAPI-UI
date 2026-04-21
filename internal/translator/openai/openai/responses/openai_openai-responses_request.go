@@ -48,6 +48,10 @@ func ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
 		out, _ = sjson.SetBytes(out, "parallel_tool_calls", parallelToolCalls.Bool())
 	}
 
+	if serviceTier := root.Get("service_tier"); serviceTier.Exists() {
+		out, _ = sjson.SetBytes(out, "service_tier", serviceTier.String())
+	}
+
 	// Convert instructions to system message
 	if instructions := root.Get("instructions"); instructions.Exists() {
 		systemMessage := []byte(`{"role":"system","content":""}`)

@@ -971,6 +971,68 @@ func TestResponsesWebsocketPrewarmHandledLocallyForSSEUpstream(t *testing.T) {
 	}
 }
 
+func TestResponsesWebsocketPrewarmHandledLocallyForSSEUpstreamPreservesFastServiceTier(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	executor := &websocketCaptureExecutor{}
+	manager := coreauth.NewManager(nil, nil, nil)
+	manager.RegisterExecutor(executor)
+	auth := &coreauth.Auth{ID: "auth-sse", Provider: executor.Identifier(), Status: coreauth.StatusActive}
+	if _, err := manager.Register(context.Background(), auth); err != nil {
+		t.Fatalf("Register auth: %v", err)
+	}
+	registry.GetGlobalRegistry().RegisterClient(auth.ID, auth.Provider, []*registry.ModelInfo{{ID: "test-model"}})
+	t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(auth.ID) })
+
+	base := handlers.NewBaseAPIHandlers(&sdkconfig.SDKConfig{}, manager)
+	h := NewOpenAIResponsesAPIHandler(base)
+	router := gin.New()
+	router.GET("/v1/responses/ws", h.ResponsesWebsocket)
+
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/v1/responses/ws"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer conn.Close()
+
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","model":"test-model","generate":false}`)); err != nil {
+		t.Fatalf("write prewarm websocket message: %v", err)
+	}
+	if _, _, err := conn.ReadMessage(); err != nil {
+		t.Fatalf("read prewarm created message: %v", err)
+	}
+	_, completedPayload, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read prewarm completed message: %v", err)
+	}
+	if completedType := gjson.GetBytes(completedPayload, "type").String(); completedType != wsEventTypeCompleted {
+		t.Fatalf("completed payload type = %s, want %s", completedType, wsEventTypeCompleted)
+	}
+	prewarmResponseID := gjson.GetBytes(completedPayload, "response.id").String()
+	if prewarmResponseID == "" {
+		t.Fatalf("prewarm response id is empty")
+	}
+
+	followup := fmt.Sprintf(`{"type":"response.create","previous_response_id":%q,"service_tier":"fast","input":[{"type":"message","id":"msg-1"}]}`, prewarmResponseID)
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(followup)); err != nil {
+		t.Fatalf("write follow-up websocket message: %v", err)
+	}
+	if _, _, err := conn.ReadMessage(); err != nil {
+		t.Fatalf("read upstream completed message: %v", err)
+	}
+
+	if executor.streamCalls != 1 || len(executor.payloads) != 1 {
+		t.Fatalf("unexpected captured upstream payloads: calls=%d payloads=%d", executor.streamCalls, len(executor.payloads))
+	}
+	if got := gjson.GetBytes(executor.payloads[0], "service_tier").String(); got != "fast" {
+		t.Fatalf("service_tier = %q, want %q: %s", got, "fast", string(executor.payloads[0]))
+	}
+}
+
 func TestWebsocketClientAddressUsesGinClientIP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
