@@ -16,4 +16,6 @@ const (
 	StatusError Status = "error"
 	// StatusDisabled marks the auth as intentionally disabled.
 	StatusDisabled Status = "disabled"
+	// StatusDeactivated marks the auth as permanently unusable after terminal failures.
+	StatusDeactivated Status = "deactivated"
 )

@@ -59,3 +59,35 @@ func TestUpdateAggregatedAvailability_FutureNextRetryBlocksAuth(t *testing.T) {
 		t.Fatalf("auth.NextRetryAfter = %v, want %v", auth.NextRetryAfter, next)
 	}
 }
+
+func TestUpdateAggregatedAvailability_DoesNotClearDeactivatedStatus(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	auth := &Auth{
+		ID:            "a",
+		Status:        StatusDeactivated,
+		StatusMessage: "revoked token",
+		Unavailable:   true,
+		LastError:     &Error{Message: "revoked token"},
+		ModelStates: map[string]*ModelState{
+			"test-model": {
+				Status:         StatusError,
+				Unavailable:    true,
+				NextRetryAfter: now.Add(5 * time.Minute),
+			},
+		},
+	}
+
+	updateAggregatedAvailability(auth, now)
+
+	if auth.Status != StatusDeactivated {
+		t.Fatalf("auth.Status = %q, want %q", auth.Status, StatusDeactivated)
+	}
+	if auth.StatusMessage != "revoked token" {
+		t.Fatalf("auth.StatusMessage = %q, want %q", auth.StatusMessage, "revoked token")
+	}
+	if auth.LastError == nil || auth.LastError.Message != "revoked token" {
+		t.Fatalf("auth.LastError = %#v, want message %q", auth.LastError, "revoked token")
+	}
+}

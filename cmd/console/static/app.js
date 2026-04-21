@@ -6,10 +6,18 @@
   const LOGS_CACHE_KEY = 'dashboard-request-activity-cache';
   const LOGS_CACHE_LIMIT = 200;
 
+  const storage = typeof localStorage !== 'undefined' && localStorage && typeof localStorage.getItem === 'function'
+    ? localStorage
+    : {
+        getItem() { return null; },
+        setItem() {},
+        removeItem() {},
+      };
+
   // State
   let state = {
-    theme: localStorage.getItem('dashboard-theme') || 'dark',
-    apiKey: localStorage.getItem('dashboard-api-key') || '',
+    theme: storage.getItem('dashboard-theme') || 'dark',
+    apiKey: storage.getItem('dashboard-api-key') || '',
     activeTab: 'dashboard',
     accounts: [],
     usage: null,
@@ -89,11 +97,11 @@
 
     loadData().then(() => {
       // Restore saved state
-      const savedTab = localStorage.getItem('dashboard-tab');
+      const savedTab = storage.getItem('dashboard-tab');
       if (savedTab && savedTab !== state.activeTab) {
         switchTab(savedTab);
       }
-      const savedAccount = localStorage.getItem('dashboard-selected-account');
+      const savedAccount = storage.getItem('dashboard-selected-account');
       if (savedAccount && state.accounts.find(a => a.id === savedAccount)) {
         selectAccount(savedAccount);
       }
@@ -175,7 +183,7 @@
         // But we need to signal that API has a key
         // The console server passes the key to API, so we just need to mark it as available
         state.apiKey = 'auto';
-        localStorage.setItem('dashboard-api-key', 'auto');
+        storage.setItem('dashboard-api-key', 'auto');
 
         const input = document.getElementById('api-key-input');
         if (input) {
@@ -187,7 +195,7 @@
     } catch (e) {}
 
     // Load saved key from localStorage
-    const savedKey = localStorage.getItem('dashboard-api-key');
+    const savedKey = storage.getItem('dashboard-api-key');
     if (savedKey && savedKey !== 'auto') {
       state.apiKey = savedKey;
     }
@@ -199,7 +207,7 @@
       }
       input.addEventListener('change', (e) => {
         state.apiKey = e.target.value.trim();
-        localStorage.setItem('dashboard-api-key', state.apiKey);
+        storage.setItem('dashboard-api-key', state.apiKey);
         showToast('API key saved', 'success');
         loadData();
       });
@@ -239,7 +247,7 @@
   // Theme management
   function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('dashboard-theme', theme);
+    storage.setItem('dashboard-theme', theme);
 
     document.querySelectorAll('.theme-btn').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.theme === theme);
@@ -359,7 +367,7 @@
   // Tab switching
   function switchTab(tab) {
     state.activeTab = tab;
-    localStorage.setItem('dashboard-tab', tab);
+    storage.setItem('dashboard-tab', tab);
 
     document.querySelectorAll('.nav-btn').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.tab === tab);
@@ -387,7 +395,7 @@
     const headers = { 'Content-Type': 'application/json' };
     // Use saved key, state key, or localStorage key
     // But don't send 'auto' - the console server handles auth automatically
-    let key = state.apiKey || localStorage.getItem('dashboard-api-key');
+    let key = state.apiKey || storage.getItem('dashboard-api-key');
     if (key && key !== 'auto') {
       headers['X-Management-Key'] = key;
     }
@@ -411,7 +419,7 @@
 
   async function fetchConfigYAMLText() {
     const headers = {};
-    const key = state.apiKey || localStorage.getItem('dashboard-api-key');
+    const key = state.apiKey || storage.getItem('dashboard-api-key');
     if (key && key !== 'auto') {
       headers['X-Management-Key'] = key;
     }
@@ -427,7 +435,7 @@
 
   async function saveConfigYAMLText(text) {
     const headers = { 'Content-Type': 'application/yaml' };
-    const key = state.apiKey || localStorage.getItem('dashboard-api-key');
+    const key = state.apiKey || storage.getItem('dashboard-api-key');
     if (key && key !== 'auto') {
       headers['X-Management-Key'] = key;
     }
@@ -664,6 +672,9 @@
       return { key: 'cooldown', label: 'rate limited' };
     }
 
+    if (backendStatus === 'deactivated') {
+      return { key: 'deactivated', label: 'deactivated' };
+    }
     if (backendStatus === 'error') {
       return { key: 'error', label: 'error' };
     }
@@ -897,7 +908,7 @@
 
   function selectAccount(accId) {
     selectedAccountId = accId;
-    localStorage.setItem('dashboard-selected-account', accId);
+    storage.setItem('dashboard-selected-account', accId);
     const acc = state.accounts.find(a => a.id === accId);
     if (!acc) return;
 
@@ -1049,7 +1060,7 @@
     `;
   }
 
-  window.toggleAccount = async function(accountId, currentlyDisabled) {
+  async function toggleAccount(accountId, currentlyDisabled) {
     const nextDisabled = !currentlyDisabled;
     try {
       const res = await apiFetch('/auth-files/status', {
@@ -1066,7 +1077,11 @@
     } catch (e) {
       showToast('Failed to update account', 'error');
     }
-  };
+  }
+
+  if (typeof window !== 'undefined') {
+    window.toggleAccount = toggleAccount;
+  }
 
   function leadingSpaces(line) {
     const match = line.match(/^\s*/);
@@ -1174,7 +1189,7 @@
     return lines.join('\n');
   }
 
-  window.deleteAccount = async function(accountId) {
+  async function deleteAccount(accountId) {
     if (!confirm('Delete account ' + accountId + '? This cannot be undone.')) return;
 
     try {
@@ -1190,7 +1205,11 @@
     } catch (e) {
       showToast('Failed to delete account', 'error');
     }
-  };
+  }
+
+  if (typeof window !== 'undefined') {
+    window.deleteAccount = deleteAccount;
+  }
 
   // Render empty state
   function renderEmptyState() {
@@ -1460,7 +1479,7 @@
 
   function restoreCachedLogs() {
     try {
-      const raw = localStorage.getItem(LOGS_CACHE_KEY);
+      const raw = storage.getItem(LOGS_CACHE_KEY);
       if (!raw) return;
       const cached = JSON.parse(raw);
       if (!Array.isArray(cached) || cached.length === 0) return;
@@ -1474,10 +1493,10 @@
   function persistLogs(logs) {
     try {
       if (!Array.isArray(logs) || logs.length === 0) {
-        localStorage.removeItem(LOGS_CACHE_KEY);
+        storage.removeItem(LOGS_CACHE_KEY);
         return;
       }
-      localStorage.setItem(LOGS_CACHE_KEY, JSON.stringify(logs.slice(0, LOGS_CACHE_LIMIT)));
+      storage.setItem(LOGS_CACHE_KEY, JSON.stringify(logs.slice(0, LOGS_CACHE_LIMIT)));
     } catch (error) {
       console.warn('Failed to persist logs cache:', error);
     }
@@ -1911,6 +1930,14 @@
     return str.charAt(0).toUpperCase() + str.slice(1);
   }
 
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+      deriveAccountStatus,
+    };
+  }
+
   // Start
-  document.addEventListener('DOMContentLoaded', init);
+  if (typeof document !== 'undefined') {
+    document.addEventListener('DOMContentLoaded', init);
+  }
 })();

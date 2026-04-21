@@ -176,6 +176,12 @@ type Manager struct {
 	// Auto refresh state
 	refreshCancel context.CancelFunc
 	refreshLoop   *authAutoRefreshLoop
+
+	recheckMu        sync.Mutex
+	recheckInFlight  map[string]struct{}
+	recheckLastRunAt map[string]time.Time
+	recheckCooldown  time.Duration
+	recheckRunner    func(context.Context, string)
 }
 
 // NewManager constructs a manager with optional custom selector and hook.
@@ -194,11 +200,15 @@ func NewManager(store Store, selector Selector, hook Hook) *Manager {
 		auths:            make(map[string]*Auth),
 		providerOffsets:  make(map[string]int),
 		modelPoolOffsets: make(map[string]int),
+		recheckInFlight:  make(map[string]struct{}),
+		recheckLastRunAt: make(map[string]time.Time),
+		recheckCooldown:  30 * time.Second,
 	}
 	// atomic.Value requires non-nil initial value.
 	manager.runtimeConfig.Store(&internalconfig.Config{})
 	manager.apiKeyModelAlias.Store(apiKeyModelAliasTable(nil))
 	manager.scheduler = newAuthScheduler(selector)
+	manager.recheckRunner = manager.runAuthRecheck
 	return manager
 }
 
@@ -223,6 +233,241 @@ func (m *Manager) syncScheduler() {
 		return
 	}
 	m.syncSchedulerFromSnapshot(m.snapshotAuths())
+}
+
+func (m *Manager) maybeScheduleAuthRecheck(ctx context.Context, auth *Auth) {
+	if m == nil || auth == nil || auth.ID == "" {
+		return
+	}
+	if auth.Disabled || auth.Status != StatusError {
+		return
+	}
+	if auth.Quota.Exceeded {
+		return
+	}
+
+	now := time.Now()
+	runner := m.recheckRunner
+
+	m.recheckMu.Lock()
+	if _, exists := m.recheckInFlight[auth.ID]; exists {
+		m.recheckMu.Unlock()
+		return
+	}
+	if m.recheckCooldown > 0 {
+		if lastRunAt, ok := m.recheckLastRunAt[auth.ID]; ok && now.Sub(lastRunAt) < m.recheckCooldown {
+			m.recheckMu.Unlock()
+			return
+		}
+	}
+	m.recheckInFlight[auth.ID] = struct{}{}
+	m.recheckLastRunAt[auth.ID] = now
+	m.recheckMu.Unlock()
+
+	if runner == nil {
+		m.finishAuthRecheck(auth.ID)
+		return
+	}
+	detachedCtx := context.Background()
+	if ctx != nil {
+		detachedCtx = context.WithoutCancel(ctx)
+	}
+
+	go func() {
+		defer m.finishAuthRecheck(auth.ID)
+		runner(detachedCtx, auth.ID)
+	}()
+}
+
+func (m *Manager) runAuthRecheck(ctx context.Context, authID string) {
+	if m == nil || strings.TrimSpace(authID) == "" {
+		return
+	}
+
+	auth, executor := m.recheckTarget(authID)
+	if auth == nil || executor == nil {
+		return
+	}
+
+	req, err := authRecheckProbeRequest(ctx, auth)
+	if err != nil {
+		m.applyAuthRecheckOutcome(ctx, authID, nil, err)
+		return
+	}
+	if req == nil {
+		return
+	}
+
+	resp, err := executor.HttpRequest(ctx, auth, req)
+	if resp != nil && resp.Body != nil {
+		defer resp.Body.Close()
+	}
+	m.applyAuthRecheckOutcome(ctx, authID, resp, err)
+}
+
+func authRecheckProbeRequest(ctx context.Context, auth *Auth) (*http.Request, error) {
+	url := authRecheckProbeURL(auth)
+	if url == "" {
+		return nil, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+}
+
+func authRecheckProbeURL(auth *Auth) string {
+	if auth == nil {
+		return ""
+	}
+
+	provider := strings.ToLower(strings.TrimSpace(auth.Provider))
+	baseURL := ""
+	if auth.Attributes != nil {
+		baseURL = strings.TrimSpace(auth.Attributes["base_url"])
+	}
+	if baseURL == "" && auth.Metadata != nil {
+		if v, ok := auth.Metadata["base_url"].(string); ok {
+			baseURL = strings.TrimSpace(v)
+		}
+	}
+	trimmedBase := strings.TrimRight(baseURL, "/")
+
+	switch provider {
+	case "codex":
+		if trimmedBase == "" {
+			trimmedBase = "https://chatgpt.com/backend-api/codex"
+		}
+		return trimmedBase + "/responses"
+	case "openai", "openai-compatible", "openai-compat", "openai-compatibility":
+		if trimmedBase == "" {
+			return ""
+		}
+		return trimmedBase + "/models"
+	case "claude":
+		if trimmedBase == "" {
+			trimmedBase = "https://api.anthropic.com"
+		}
+		return trimmedBase + "/v1/models"
+	case "gemini":
+		if trimmedBase == "" {
+			trimmedBase = "https://generativelanguage.googleapis.com"
+		}
+		return trimmedBase + "/v1beta/models/gemini-2.5-flash:generateContent"
+	case "gemini-cli":
+		if trimmedBase == "" {
+			trimmedBase = "https://cloudcode-pa.googleapis.com"
+		}
+		return trimmedBase + "/v1internal:countTokens"
+	case "vertex":
+		location := ""
+		if auth.Metadata != nil {
+			if v, ok := auth.Metadata["location"].(string); ok {
+				location = strings.TrimSpace(v)
+			}
+		}
+		if location == "" {
+			location = "global"
+		}
+		if trimmedBase == "" {
+			if location == "global" {
+				trimmedBase = "https://aiplatform.googleapis.com"
+			} else {
+				trimmedBase = "https://" + location + "-aiplatform.googleapis.com"
+			}
+		}
+		return trimmedBase + "/v1/projects/-/locations/" + location + "/publishers/google/models"
+	case "kimi":
+		if trimmedBase == "" {
+			trimmedBase = "https://api.moonshot.ai"
+		}
+		return trimmedBase + "/v1/models"
+	case "antigravity":
+		if trimmedBase == "" {
+			trimmedBase = "https://cloudcode-pa.googleapis.com"
+		}
+		return trimmedBase + "/v1internal:countTokens"
+	default:
+		return ""
+	}
+}
+
+func (m *Manager) finishAuthRecheck(authID string) {
+	if m == nil || strings.TrimSpace(authID) == "" {
+		return
+	}
+	m.recheckMu.Lock()
+	delete(m.recheckInFlight, authID)
+	m.recheckMu.Unlock()
+}
+
+func (m *Manager) recheckTarget(authID string) (*Auth, ProviderExecutor) {
+	if m == nil || strings.TrimSpace(authID) == "" {
+		return nil, nil
+	}
+	m.mu.RLock()
+	auth := m.auths[authID]
+	m.mu.RUnlock()
+	if auth == nil {
+		return nil, nil
+	}
+	executor, ok := m.Executor(auth.Provider)
+	if !ok {
+		return nil, nil
+	}
+	return auth.Clone(), executor
+}
+
+func (m *Manager) applyAuthRecheckOutcome(ctx context.Context, authID string, resp *http.Response, err error) {
+	if m == nil || strings.TrimSpace(authID) == "" {
+		return
+	}
+
+	now := time.Now()
+	m.mu.Lock()
+	auth := m.auths[authID]
+	if auth == nil {
+		m.mu.Unlock()
+		return
+	}
+
+	if err == nil && resp != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		clearAuthStateOnSuccess(auth, now)
+		authCopy := auth.Clone()
+		m.mu.Unlock()
+		_ = m.persist(ctx, authCopy)
+		if m.scheduler != nil {
+			m.scheduler.upsertAuth(authCopy)
+		}
+		return
+	}
+
+	resultErr := &Error{}
+	if err != nil {
+		resultErr.Message = err.Error()
+		resultErr.HTTPStatus = statusCodeFromError(err)
+	}
+	if resp != nil && resp.StatusCode > 0 {
+		if resultErr.HTTPStatus == 0 {
+			resultErr.HTTPStatus = resp.StatusCode
+		}
+		if resultErr.Message == "" {
+			resultErr.Message = http.StatusText(resp.StatusCode)
+		}
+	}
+	if auth.Status == StatusDeactivated && !isPermanentAuthFailure(resultErr) {
+		auth.Unavailable = true
+		auth.UpdatedAt = now
+		auth.NextRetryAfter = time.Time{}
+		authCopy := auth.Clone()
+		m.mu.Unlock()
+		_ = m.persist(ctx, authCopy)
+		return
+	}
+	applyAuthFailureState(auth, resultErr, nil, now)
+	authCopy := auth.Clone()
+	m.mu.Unlock()
+	_ = m.persist(ctx, authCopy)
 }
 
 func (m *Manager) snapshotAuths() []*Auth {
@@ -2016,6 +2261,7 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 	suspendReason := ""
 	clearModelQuota := false
 	setModelQuota := false
+	shouldScheduleAuthRecheck := false
 	var authSnapshot *Auth
 
 	m.mu.Lock()
@@ -2023,7 +2269,16 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 		now := time.Now()
 
 		if result.Success {
-			if result.Model != "" {
+			if auth.Status == StatusDeactivated {
+				if result.Model != "" {
+					state := ensureModelState(auth, result.Model)
+					resetModelState(state, now)
+					updateAggregatedAvailability(auth, now)
+					auth.UpdatedAt = now
+					shouldResumeModel = true
+					clearModelQuota = true
+				}
+			} else if result.Model != "" {
 				state := ensureModelState(auth, result.Model)
 				resetModelState(state, now)
 				updateAggregatedAvailability(auth, now)
@@ -2132,6 +2387,7 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 				}
 			} else {
 				applyAuthFailureState(auth, result.Error, result.RetryAfter, now)
+				shouldScheduleAuthRecheck = auth.Status == StatusError && !auth.Disabled && !auth.Quota.Exceeded
 			}
 		}
 
@@ -2156,6 +2412,9 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 	}
 
 	m.hook.OnResult(ctx, result)
+	if shouldScheduleAuthRecheck {
+		m.maybeScheduleAuthRecheck(ctx, authSnapshot)
+	}
 }
 
 func ensureModelState(auth *Auth, model string) *ModelState {
@@ -2474,11 +2733,50 @@ func isRequestInvalidError(err error) bool {
 	}
 }
 
+func isPermanentAuthFailure(err *Error) bool {
+	if err == nil {
+		return false
+	}
+
+	message := strings.ToLower(strings.TrimSpace(err.Message))
+	if message == "" {
+		return false
+	}
+
+	hasAny := func(patterns ...string) bool {
+		for _, pattern := range patterns {
+			if strings.Contains(message, pattern) {
+				return true
+			}
+		}
+		return false
+	}
+
+	switch err.HTTPStatus {
+	case http.StatusUnauthorized:
+		return hasAny("revoked", "invalid token", "expired refresh token")
+	case http.StatusForbidden:
+		return hasAny("banned", "suspended", "deactivated", "account disabled")
+	default:
+		return false
+	}
+}
+
 func applyAuthFailureState(auth *Auth, resultErr *Error, retryAfter *time.Duration, now time.Time) {
 	if auth == nil {
 		return
 	}
 	if isRequestScopedNotFoundResultError(resultErr) {
+		return
+	}
+	if isPermanentAuthFailure(resultErr) {
+		auth.Unavailable = true
+		auth.Status = StatusDeactivated
+		auth.UpdatedAt = now
+		auth.LastError = cloneError(resultErr)
+		auth.StatusMessage = strings.TrimSpace(resultErr.Message)
+		auth.NextRetryAfter = time.Time{}
+		auth.Quota = QuotaState{}
 		return
 	}
 	disableCooling := quotaCooldownDisabledForAuth(auth)
