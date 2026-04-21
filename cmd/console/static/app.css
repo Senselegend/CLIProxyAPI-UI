@@ -493,14 +493,16 @@ body::after {
 
 .account-status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--signal); box-shadow: 0 0 6px var(--signal); }
 .account-status.active { color: var(--signal); }
-.account-status.cooldown { color: var(--warn); }
-.account-status.cooldown .account-status-dot { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
-.account-status.paused { color: var(--text-muted); }
-.account-status.paused .account-status-dot { background: var(--text-muted); box-shadow: none; }
-.account-status.pending { color: var(--warn); }
-.account-status.pending .account-status-dot { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
-.account-status.refreshing { color: var(--accent); }
-.account-status.refreshing .account-status-dot { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+.account-status.rate_limited { color: var(--warn); }
+.account-status.rate_limited .account-status-dot { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
+.account-status.paused,
+.account-status.disabled,
+.account-status.deactivated { color: var(--text-muted); }
+.account-status.paused .account-status-dot,
+.account-status.disabled .account-status-dot,
+.account-status.deactivated .account-status-dot { background: var(--text-muted); box-shadow: none; }
+.account-status.syncing { color: var(--accent); }
+.account-status.syncing .account-status-dot { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
 .account-status.error { color: var(--danger); }
 .account-status.error .account-status-dot { background: var(--danger); box-shadow: 0 0 6px var(--danger); }
 
@@ -1514,10 +1516,11 @@ body::after {
 }
 
 .account-status-badge.active { background: var(--signal-soft); color: var(--signal); }
-.account-status-badge.cooldown { background: var(--warn-soft); color: var(--warn); }
-.account-status-badge.paused { background: var(--warn-soft); color: var(--warn); }
-.account-status-badge.pending { background: var(--warn-soft); color: var(--warn); }
-.account-status-badge.refreshing { background: var(--accent-soft); color: var(--accent); }
+.account-status-badge.rate_limited { background: var(--warn-soft); color: var(--warn); }
+.account-status-badge.paused,
+.account-status-badge.disabled,
+.account-status-badge.deactivated { background: var(--warn-soft); color: var(--warn); }
+.account-status-badge.syncing { background: var(--accent-soft); color: var(--accent); }
 .account-status-badge.error { background: var(--danger-soft); color: var(--danger); }
 
 .account-item-meta {

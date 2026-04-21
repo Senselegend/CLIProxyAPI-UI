@@ -2500,12 +2500,16 @@ func updateAggregatedAvailability(auth *Auth, now time.Time) {
 			allUnavailable = false
 		}
 		if state.Quota.Exceeded {
-			quotaExceeded = true
-			if quotaRecover.IsZero() || (!state.Quota.NextRecoverAt.IsZero() && state.Quota.NextRecoverAt.Before(quotaRecover)) {
-				quotaRecover = state.Quota.NextRecoverAt
-			}
-			if state.Quota.BackoffLevel > maxBackoffLevel {
-				maxBackoffLevel = state.Quota.BackoffLevel
+			if state.Quota.NextRecoverAt.IsZero() || !state.Quota.NextRecoverAt.After(now) {
+				state.Quota = QuotaState{}
+			} else {
+				quotaExceeded = true
+				if quotaRecover.IsZero() || state.Quota.NextRecoverAt.After(quotaRecover) {
+					quotaRecover = state.Quota.NextRecoverAt
+				}
+				if state.Quota.BackoffLevel > maxBackoffLevel {
+					maxBackoffLevel = state.Quota.BackoffLevel
+				}
 			}
 		}
 	}
@@ -2813,6 +2817,7 @@ func applyAuthFailureState(auth *Auth, resultErr *Error, retryAfter *time.Durati
 			auth.NextRetryAfter = now.Add(12 * time.Hour)
 		}
 	case 429:
+		auth.Status = StatusRateLimited
 		auth.StatusMessage = "quota exhausted"
 		auth.Quota.Exceeded = true
 		auth.Quota.Reason = "quota"

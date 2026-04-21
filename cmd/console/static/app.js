@@ -645,15 +645,18 @@
       return null;
     }
 
-    return { key: 'refreshing', label: 'syncing' };
+    return { key: 'syncing', label: 'syncing' };
   }
 
   function deriveAccountStatus(file, quota) {
     const backendStatus = String(file?.status || '').trim().toLowerCase();
     const statusMessage = String(file?.status_message || '').trim().toLowerCase();
 
-    if (file?.disabled || backendStatus === 'disabled') {
+    if (file?.disabled) {
       return { key: 'paused', label: 'paused' };
+    }
+    if (backendStatus === 'disabled') {
+      return { key: 'disabled', label: 'disabled' };
     }
 
     const startupSyncStatus = getStartupSyncAccountStatus(file, quota);
@@ -663,26 +666,26 @@
 
     if (file?.unavailable && hasFutureRetry(file?.next_retry_after)) {
       if (statusMessage.includes('quota') || statusMessage.includes('rate')) {
-        return { key: 'cooldown', label: 'rate limited' };
+        return { key: 'rate_limited', label: 'rate limited' };
       }
-      return { key: 'cooldown', label: 'cooldown' };
+      return { key: 'error', label: 'error' };
     }
 
     if (hasQuotaCooldown(quota?.primary_window) || hasQuotaCooldown(quota?.secondary_window)) {
-      return { key: 'cooldown', label: 'rate limited' };
+      return { key: 'rate_limited', label: 'rate limited' };
     }
 
+    if (backendStatus === 'rate_limited') {
+      return { key: 'rate_limited', label: 'rate limited' };
+    }
     if (backendStatus === 'deactivated') {
       return { key: 'deactivated', label: 'deactivated' };
     }
     if (backendStatus === 'error') {
       return { key: 'error', label: 'error' };
     }
-    if (backendStatus === 'refreshing') {
-      return { key: 'refreshing', label: 'refreshing' };
-    }
-    if (backendStatus === 'pending') {
-      return { key: 'pending', label: 'pending' };
+    if (backendStatus === 'unknown' || backendStatus === 'refreshing' || backendStatus === 'pending') {
+      return { key: 'syncing', label: 'syncing' };
     }
 
     return { key: 'active', label: 'active' };
