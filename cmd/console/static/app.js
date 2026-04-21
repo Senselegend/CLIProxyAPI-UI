@@ -5,6 +5,7 @@
   const API_BASE = '/v0/management';
   const LOGS_CACHE_KEY = 'dashboard-request-activity-cache';
   const LOGS_CACHE_LIMIT = 200;
+  const LOGS_PAGE_SIZE = 50;
 
   const storage = typeof localStorage !== 'undefined' && localStorage && typeof localStorage.getItem === 'function'
     ? localStorage
@@ -22,6 +23,7 @@
     accounts: [],
     usage: null,
     logs: [],
+    logVisibleCount: 50,
     settings: {},
     quotaSummary: null,
     quotaStartupSync: null
@@ -1526,7 +1528,7 @@
     if (activityLogs.length > 0) {
       state.logs = mergeLogsWithCache(activityLogs);
       persistLogs(state.logs);
-      renderLogs(state.logs);
+      filterLogs();
       return;
     }
 
@@ -1542,7 +1544,7 @@
 
     state.logs = mergeLogsWithCache(lineLogs);
     persistLogs(state.logs);
-    renderLogs(state.logs);
+    filterLogs();
   }
 
   function normalizeActivityEntries(data) {
@@ -1716,6 +1718,37 @@
     renderLogs(mockLogs);
   }
 
+  function getVisibleLogs(logs, visibleCount) {
+    if (!Array.isArray(logs) || logs.length === 0) return [];
+    const count = Math.max(0, Number(visibleCount) || 0);
+    if (count <= 0) return [];
+    return logs.slice(-count);
+  }
+
+  function shouldShowOlderLogsControl(logs, visibleCount) {
+    if (!Array.isArray(logs) || logs.length === 0) return false;
+    return logs.length > (Number(visibleCount) || 0);
+  }
+
+  function renderLogsFooter(logs) {
+    const footer = document.getElementById('logs-footer');
+    if (!footer) return;
+
+    if (!shouldShowOlderLogsControl(logs, state.logVisibleCount)) {
+      footer.innerHTML = '';
+      return;
+    }
+
+    footer.innerHTML = `<button class="btn btn-secondary btn-sm" id="logs-show-older">Show ${LOGS_PAGE_SIZE} older</button>`;
+
+    const button = document.getElementById('logs-show-older');
+    if (!button) return;
+    button.addEventListener('click', () => {
+      state.logVisibleCount += LOGS_PAGE_SIZE;
+      filterLogs();
+    });
+  }
+
   // Render logs table
   function renderLogs(logs) {
     const tbody = document.getElementById('logs-body');
@@ -1723,10 +1756,13 @@
 
     if (!logs || logs.length === 0) {
       renderEmptyLogs();
+      renderLogsFooter([]);
       return;
     }
 
-    tbody.innerHTML = logs.map(log => `
+    const visibleLogs = getVisibleLogs(logs, state.logVisibleCount);
+
+    tbody.innerHTML = visibleLogs.map(log => `
       <tr>
         <td><span class="log-id">${escapeHtml(log.id)}</span></td>
         <td>${escapeHtml(log.account)}</td>
@@ -1738,6 +1774,8 @@
         <td title="${escapeHtml(log.message)}">${escapeHtml(log.message.substring(0, 50))}${log.message.length > 50 ? '...' : ''}</td>
       </tr>
     `).join('');
+
+    renderLogsFooter(logs);
   }
 
   // Filter logs
@@ -1934,10 +1972,24 @@
     return str.charAt(0).toUpperCase() + str.slice(1);
   }
 
+  function setLogVisibleCount(value) {
+    state.logVisibleCount = value;
+  }
+
+  function setLogsForTest(logs) {
+    state.logs = logs;
+  }
+
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       deriveAccountStatus,
       normalizeActivityEntries,
+      getVisibleLogs,
+      shouldShowOlderLogsControl,
+      renderLogs,
+      filterLogs,
+      setLogVisibleCount,
+      setLogsForTest,
     };
   }
 
