@@ -618,6 +618,31 @@
     `).join('');
   }
 
+  function computeQuotaSummaryFromQuotas(quotas) {
+    const quotaList = Array.isArray(quotas) ? quotas : [];
+
+    function computeWindowAverage(windowKey) {
+      const values = quotaList
+        .map(quota => {
+          const window = quota && quota[windowKey];
+          return Number(window && window.used_percent);
+        })
+        .filter(Number.isFinite);
+
+      if (values.length === 0) {
+        return 0;
+      }
+
+      const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+      return Math.max(0, Math.min(100, Math.round(average)));
+    }
+
+    return {
+      primary_used_percent: computeWindowAverage('primary_window'),
+      secondary_used_percent: computeWindowAverage('secondary_window')
+    };
+  }
+
   function hasFutureRetry(retryAt) {
     if (!retryAt) return false;
     const retryDate = new Date(retryAt);
@@ -795,9 +820,7 @@
       });
     }
 
-    if (quotaData && quotaData.summary) {
-      state.quotaSummary = quotaData.summary;
-    }
+    state.quotaSummary = computeQuotaSummaryFromQuotas(quotaData && quotaData.quotas);
 
     state.accounts = authData.files.map((file, i) => {
       const quota = quotaMap[file.name] || {};
@@ -911,6 +934,22 @@
   // Select and show account detail
   let selectedAccountId = null;
 
+  function resolveAccountUsage(state, acc) {
+    if (!state || !state.usage || !state.usage.apis || !acc) {
+      return null;
+    }
+
+    if (acc.email && state.usage.apis[acc.email]) {
+      return state.usage.apis[acc.email];
+    }
+
+    if (acc.id && state.usage.apis[acc.id]) {
+      return state.usage.apis[acc.id];
+    }
+
+    return null;
+  }
+
   function selectAccount(accId) {
     selectedAccountId = accId;
     storage.setItem('dashboard-selected-account', accId);
@@ -920,28 +959,7 @@
     const panel = document.getElementById('account-detail-panel');
     if (!panel) return;
 
-    // Get usage data for this account - try email first (Codex), then file name (other providers)
-    let usage = null;
-    if (state.usage && state.usage.apis) {
-      // Try email as key (Codex OAuth accounts)
-      if (acc.email && state.usage.apis[acc.email]) {
-        usage = state.usage.apis[acc.email];
-      }
-      // Fallback to id (file name)
-      if (!usage && state.usage.apis[accId]) {
-        usage = state.usage.apis[accId];
-      }
-      // Try partial match on email prefix
-      if (!usage) {
-        const emailPrefix = acc.email ? acc.email.split('@')[0] : '';
-        for (const key of Object.keys(state.usage.apis)) {
-          if (key.includes(emailPrefix) || emailPrefix.includes(key.split('@')[0])) {
-            usage = state.usage.apis[key];
-            break;
-          }
-        }
-      }
-    }
+    const usage = resolveAccountUsage(state, acc);
 
     const totalRequests = usage ? usage.total_requests || 0 : 0;
     const totalTokens = usage ? usage.total_tokens || 0 : 0;
@@ -1990,6 +2008,8 @@
       filterLogs,
       setLogVisibleCount,
       setLogsForTest,
+      computeQuotaSummaryFromQuotas,
+      resolveAccountUsage,
     };
   }
 
