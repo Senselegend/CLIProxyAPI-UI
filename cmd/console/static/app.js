@@ -1552,7 +1552,8 @@
       .filter(entry => {
         const method = String(entry?.method || '').trim().toUpperCase();
         const path = String(entry?.path || '').trim();
-        return !(method === 'HEAD' && path === '/');
+        const account = String(entry?.account || '').trim();
+        return !(method === 'HEAD' && path === '/') && account !== '';
       })
       .map(entry => ({
         id: entry.id || '--',
@@ -1936,6 +1937,7 @@
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       deriveAccountStatus,
+      normalizeActivityEntries,
     };
   }
 
