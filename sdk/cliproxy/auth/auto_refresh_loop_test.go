@@ -117,12 +117,13 @@ func TestNextRefreshCheckAt_ProviderLead_Expiry(t *testing.T) {
 	}
 }
 
-func TestNextRefreshCheckAt_RefreshEvaluatorFallback(t *testing.T) {
+func TestNextRefreshCheckAt_RefreshEvaluatorFallback_StatusErrorSchedules(t *testing.T) {
 	now := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
 	interval := 15 * time.Minute
 	auth := &Auth{
 		ID:       "a1",
 		Provider: "test",
+		Status:   StatusError,
 		Metadata: map[string]any{"email": "x@example.com"},
 		Runtime:  testRefreshEvaluator{},
 	}
@@ -131,6 +132,74 @@ func TestNextRefreshCheckAt_RefreshEvaluatorFallback(t *testing.T) {
 		t.Fatalf("nextRefreshCheckAt() ok = false, want true")
 	}
 	want := now.Add(interval)
+	if !got.Equal(want) {
+		t.Fatalf("nextRefreshCheckAt() = %s, want %s", got, want)
+	}
+}
+
+func TestNextRefreshCheckAt_RefreshEvaluatorFallback_StatusRateLimitedDoesNotSchedule(t *testing.T) {
+	now := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
+	auth := &Auth{
+		ID:       "a1",
+		Provider: "test",
+		Status:   StatusRateLimited,
+		Metadata: map[string]any{"email": "x@example.com"},
+		Runtime:  testRefreshEvaluator{},
+	}
+	if _, ok := nextRefreshCheckAt(now, auth, 15*time.Minute); ok {
+		t.Fatalf("nextRefreshCheckAt() ok = true, want false")
+	}
+}
+
+func TestNextRefreshCheckAt_RefreshEvaluatorNonErrorFallsThroughToPreferredInterval(t *testing.T) {
+	now := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
+	expiry := now.Add(20 * time.Minute)
+	auth := &Auth{
+		ID:              "a1",
+		Provider:        "test",
+		Status:          StatusRateLimited,
+		LastRefreshedAt: now,
+		Runtime:         testRefreshEvaluator{},
+		Metadata: map[string]any{
+			"email":                    "x@example.com",
+			"expires_at":               expiry.Format(time.RFC3339),
+			"refresh_interval_seconds": 900,
+		},
+	}
+	got, ok := nextRefreshCheckAt(now, auth, 15*time.Minute)
+	if !ok {
+		t.Fatalf("nextRefreshCheckAt() ok = false, want true")
+	}
+	want := expiry.Add(-15 * time.Minute)
+	if !got.Equal(want) {
+		t.Fatalf("nextRefreshCheckAt() = %s, want %s", got, want)
+	}
+}
+
+func TestNextRefreshCheckAt_RefreshEvaluatorNonErrorFallsThroughToProviderLeadExpiry(t *testing.T) {
+	now := time.Date(2026, 4, 12, 0, 0, 0, 0, time.UTC)
+	expiry := now.Add(time.Hour)
+	lead := 10 * time.Minute
+	setRefreshLeadFactory(t, "refresh-evaluator-provider-lead", func() *time.Duration {
+		d := lead
+		return &d
+	})
+
+	auth := &Auth{
+		ID:       "a1",
+		Provider: "refresh-evaluator-provider-lead",
+		Status:   StatusActive,
+		Runtime:  testRefreshEvaluator{},
+		Metadata: map[string]any{
+			"email":      "x@example.com",
+			"expires_at": expiry.Format(time.RFC3339),
+		},
+	}
+	got, ok := nextRefreshCheckAt(now, auth, 15*time.Minute)
+	if !ok {
+		t.Fatalf("nextRefreshCheckAt() ok = false, want true")
+	}
+	want := expiry.Add(-lead)
 	if !got.Equal(want) {
 		t.Fatalf("nextRefreshCheckAt() = %s, want %s", got, want)
 	}

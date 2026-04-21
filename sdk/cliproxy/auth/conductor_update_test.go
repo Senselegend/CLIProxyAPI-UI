@@ -191,6 +191,52 @@ func TestManager_Update_DisabledToActiveDoesNotInheritStaleModelStates(t *testin
 	}
 }
 
+func TestManager_Update_PreservesPausedAndRateLimitedStatuses(t *testing.T) {
+	m := NewManager(nil, nil, nil)
+
+	model := "cooldown-model"
+	backoffLevel := 6
+
+	if _, errRegister := m.Register(context.Background(), &Auth{
+		ID:       "auth-paused",
+		Provider: "claude",
+		Status:   StatusPaused,
+		ModelStates: map[string]*ModelState{
+			model: {
+				Quota: QuotaState{BackoffLevel: backoffLevel},
+			},
+		},
+	}); errRegister != nil {
+		t.Fatalf("register auth: %v", errRegister)
+	}
+
+	if _, errUpdate := m.Update(context.Background(), &Auth{
+		ID:       "auth-paused",
+		Provider: "claude",
+		Status:   StatusRateLimited,
+	}); errUpdate != nil {
+		t.Fatalf("update auth: %v", errUpdate)
+	}
+
+	updated, ok := m.GetByID("auth-paused")
+	if !ok || updated == nil {
+		t.Fatalf("expected auth to be present")
+	}
+	if updated.Status != StatusRateLimited {
+		t.Fatalf("expected Status to be %q, got %q", StatusRateLimited, updated.Status)
+	}
+	if len(updated.ModelStates) == 0 {
+		t.Fatalf("expected ModelStates to be preserved")
+	}
+	state := updated.ModelStates[model]
+	if state == nil {
+		t.Fatalf("expected model state to be present")
+	}
+	if state.Quota.BackoffLevel != backoffLevel {
+		t.Fatalf("expected BackoffLevel to be %d, got %d", backoffLevel, state.Quota.BackoffLevel)
+	}
+}
+
 func TestManager_Update_ActiveInheritsModelStates(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 

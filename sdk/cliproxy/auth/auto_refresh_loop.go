@@ -350,10 +350,12 @@ func nextRefreshCheckAt(now time.Time, auth *Auth, interval time.Duration) (time
 	}
 
 	if evaluator, ok := auth.Runtime.(RefreshEvaluator); ok && evaluator != nil {
-		if interval <= 0 {
-			interval = refreshCheckInterval
+		if auth.Status == StatusError {
+			if interval <= 0 {
+				interval = refreshCheckInterval
+			}
+			return now.Add(interval), true
 		}
-		return now.Add(interval), true
 	}
 
 	lastRefresh := auth.LastRefreshedAt
