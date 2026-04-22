@@ -57,4 +57,5 @@ cli-console
 cmd/console/static_tests/*
 cmd/server/main_test.go
 internal/api/quota_autostart_test.go
+.worktrees/
 .gitignore
