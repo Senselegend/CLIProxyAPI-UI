@@ -5,7 +5,11 @@ package usage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/usage"
+	log "github.com/sirupsen/logrus"
 )
 
 var statisticsEnabled atomic.Bool
@@ -92,6 +97,7 @@ type RequestDetail struct {
 	Timestamp time.Time  `json:"timestamp"`
 	LatencyMs int64      `json:"latency_ms"`
 	Source    string     `json:"source"`
+	Account   string     `json:"account,omitempty"`
 	AuthIndex string     `json:"auth_index"`
 	Tokens    TokenStats `json:"tokens"`
 	Failed    bool       `json:"failed"`
@@ -201,6 +207,7 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 		Timestamp: timestamp,
 		LatencyMs: normaliseLatency(record.Latency),
 		Source:    record.Source,
+		Account:   resolveUsageAccountKey(record),
 		AuthIndex: record.AuthIndex,
 		Tokens:    detail,
 		Failed:    failed,
@@ -383,11 +390,16 @@ func (s *RequestStatistics) recordImported(apiName, modelName string, stats *api
 func dedupKey(apiName, modelName string, detail RequestDetail) string {
 	timestamp := detail.Timestamp.UTC().Format(time.RFC3339Nano)
 	tokens := normaliseTokenStats(detail.Tokens)
+	accountKey := strings.TrimSpace(detail.Account)
+	if accountKey == "" {
+		accountKey = strings.TrimSpace(detail.Source)
+	}
 	return fmt.Sprintf(
-		"%s|%s|%s|%s|%s|%t|%d|%d|%d|%d|%d",
+		"%s|%s|%s|%s|%s|%s|%t|%d|%d|%d|%d|%d",
 		apiName,
 		modelName,
 		timestamp,
+		accountKey,
 		detail.Source,
 		detail.AuthIndex,
 		detail.Failed,
@@ -397,6 +409,150 @@ func dedupKey(apiName, modelName string, detail RequestDetail) string {
 		tokens.CachedTokens,
 		tokens.TotalTokens,
 	)
+}
+
+func trimSnapshotDetails(snapshot StatisticsSnapshot, cutoff time.Time) StatisticsSnapshot {
+	if snapshot.APIs == nil {
+		return snapshot
+	}
+	trimmed := snapshot
+	trimmed.APIs = make(map[string]APISnapshot, len(snapshot.APIs))
+	for apiName, apiSnapshot := range snapshot.APIs {
+		apiCopy := APISnapshot{
+			TotalRequests: apiSnapshot.TotalRequests,
+			TotalTokens:   apiSnapshot.TotalTokens,
+			Models:        make(map[string]ModelSnapshot, len(apiSnapshot.Models)),
+		}
+		for modelName, modelSnapshot := range apiSnapshot.Models {
+			modelCopy := ModelSnapshot{
+				TotalRequests: modelSnapshot.TotalRequests,
+				TotalTokens:   modelSnapshot.TotalTokens,
+			}
+			for _, detail := range modelSnapshot.Details {
+				if detail.Timestamp.IsZero() || !detail.Timestamp.Before(cutoff) {
+					modelCopy.Details = append(modelCopy.Details, detail)
+				}
+			}
+			apiCopy.Models[modelName] = modelCopy
+		}
+		trimmed.APIs[apiName] = apiCopy
+	}
+	return trimmed
+}
+
+func (s *RequestStatistics) Persist(storageDir string) error {
+	if s == nil || storageDir == "" {
+		return nil
+	}
+	dir, err := resolveUsageStorageDir(storageDir)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	snapshot := trimSnapshotDetails(s.Snapshot(), time.Now().Add(-7*24*time.Hour))
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "request_statistics.json"), data, 0o644)
+}
+
+func (s *RequestStatistics) Load(storageDir string) error {
+	if s == nil || storageDir == "" {
+		return nil
+	}
+	dir, err := resolveUsageStorageDir(storageDir)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "request_statistics.json"))
+	if err != nil {
+		return err
+	}
+	var snapshot StatisticsSnapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.totalRequests = snapshot.TotalRequests
+	s.successCount = snapshot.SuccessCount
+	s.failureCount = snapshot.FailureCount
+	s.totalTokens = snapshot.TotalTokens
+
+	s.apis = make(map[string]*apiStats, len(snapshot.APIs))
+	for apiName, apiSnapshot := range snapshot.APIs {
+		stats := &apiStats{
+			TotalRequests: apiSnapshot.TotalRequests,
+			TotalTokens:   apiSnapshot.TotalTokens,
+			Models:        make(map[string]*modelStats, len(apiSnapshot.Models)),
+		}
+		for modelName, modelSnapshot := range apiSnapshot.Models {
+			details := make([]RequestDetail, len(modelSnapshot.Details))
+			copy(details, modelSnapshot.Details)
+			stats.Models[modelName] = &modelStats{
+				TotalRequests: modelSnapshot.TotalRequests,
+				TotalTokens:   modelSnapshot.TotalTokens,
+				Details:       details,
+			}
+		}
+		s.apis[apiName] = stats
+	}
+
+	s.requestsByDay = make(map[string]int64, len(snapshot.RequestsByDay))
+	for key, value := range snapshot.RequestsByDay {
+		s.requestsByDay[key] = value
+	}
+
+	s.requestsByHour = make(map[int]int64, len(snapshot.RequestsByHour))
+	for key, value := range snapshot.RequestsByHour {
+		if hour, ok := parseSnapshotHourKey(key); ok {
+			s.requestsByHour[hour] = value
+		}
+	}
+
+	s.tokensByDay = make(map[string]int64, len(snapshot.TokensByDay))
+	for key, value := range snapshot.TokensByDay {
+		s.tokensByDay[key] = value
+	}
+
+	s.tokensByHour = make(map[int]int64, len(snapshot.TokensByHour))
+	for key, value := range snapshot.TokensByHour {
+		if hour, ok := parseSnapshotHourKey(key); ok {
+			s.tokensByHour[hour] = value
+		}
+	}
+
+	return nil
+}
+
+func StartRequestStatisticsPersistence(authDir string, interval time.Duration) {
+	stats := GetRequestStatistics()
+	if err := stats.Load(authDir); err != nil {
+		log.Debugf("No persisted request statistics found: %v", err)
+	}
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := stats.Persist(authDir); err != nil {
+				log.Warnf("Failed to persist request statistics: %v", err)
+			}
+		}
+	}()
+}
+
+func resolveUsageAccountKey(record coreusage.Record) string {
+	key := strings.TrimSpace(record.Source)
+	if key != "" {
+		return key
+	}
+	return strings.TrimSpace(record.APIKey)
 }
 
 func resolveAPIIdentifier(ctx context.Context, record coreusage.Record) string {
@@ -481,4 +637,16 @@ func formatHour(hour int) string {
 	}
 	hour = hour % 24
 	return fmt.Sprintf("%02d", hour)
+}
+
+func parseSnapshotHourKey(value string) (int, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	hour, err := strconv.Atoi(value)
+	if err != nil || hour < 0 || hour > 23 {
+		return 0, false
+	}
+	return hour, true
 }

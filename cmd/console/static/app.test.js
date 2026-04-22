@@ -13,6 +13,8 @@ const {
   handleRefresh,
   computeQuotaSummaryFromQuotas,
   resolveAccountUsage,
+  buildDashboardUsage,
+  updateQuotaRings,
 } = require('./app.js');
 
 function escapeHtmlForStub(value) {
@@ -367,6 +369,58 @@ test('resolveAccountUsage returns usage for an exact account id match', () => {
   };
 
   assert.equal(resolveAccountUsage(state, acc), expectedUsage);
+});
+
+test('buildDashboardUsage preserves rolling token window fields per account', () => {
+  const usage = buildDashboardUsage(
+    { usage: { total_requests: 0, total_tokens: 0, failure_count: 0, apis: {} } },
+    {
+      by_account: {
+        'alpha@example.com': {
+          total_requests: 10,
+          total_tokens: 1000,
+          failed_count: 1,
+          models: { 'gpt-5.4': 10 },
+          last_5_hours: { total_tokens: 123 },
+          last_7_days: { total_tokens: 456 },
+        },
+      },
+    },
+  );
+
+  assert.equal(usage.apis['alpha@example.com'].last_5_hours.total_tokens, 123);
+  assert.equal(usage.apis['alpha@example.com'].last_7_days.total_tokens, 456);
+});
+
+test('updateQuotaRings uses rolling token windows for 5h and 7d displays', () => {
+  global.document = createDocumentStub();
+  try {
+    updateQuotaRings(
+      {
+        'alpha@example.com': {
+          total_requests: 99,
+          total_tokens: 9999,
+          last_5_hours: { total_tokens: 120 },
+          last_7_days: { total_tokens: 1200 },
+        },
+        'beta@example.com': {
+          total_requests: 88,
+          total_tokens: 8888,
+          last_5_hours: { total_tokens: 30 },
+          last_7_days: { total_tokens: 700 },
+        },
+      },
+      { primary_used_percent: 25, secondary_used_percent: 50 },
+    );
+
+    assert.equal(document.getElementById('quota-5h-remaining').textContent, '150 tokens');
+    assert.equal(document.getElementById('quota-7d-remaining').textContent, '1.9K tokens');
+    assert.match(document.getElementById('quota-5h-legend').innerHTML, /alpha@example.com/);
+    assert.match(document.getElementById('quota-5h-legend').innerHTML, /120/);
+    assert.match(document.getElementById('quota-7d-legend').innerHTML, /1.2K/);
+  } finally {
+    delete global.document;
+  }
 });
 
 test('handleRefresh reloads data, triggers account recheck, and reloads accounts again', async () => {

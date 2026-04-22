@@ -94,3 +94,91 @@ func TestRequestStatisticsMergeSnapshotDedupIgnoresLatency(t *testing.T) {
 		t.Fatalf("details len = %d, want 1", len(details))
 	}
 }
+
+func TestRequestStatisticsPersistAndLoadRoundTrip(t *testing.T) {
+	stats := NewRequestStatistics()
+	storageDir := t.TempDir()
+	now := time.Date(2026, 4, 22, 15, 0, 0, 0, time.UTC)
+
+	stats.Record(context.Background(), coreusage.Record{
+		Source:      "alpha@example.com",
+		APIKey:      "alpha-key",
+		Model:       "gpt-5.4",
+		RequestedAt: now,
+		Latency:     150 * time.Millisecond,
+		Detail: coreusage.Detail{
+			InputTokens:  10,
+			OutputTokens: 20,
+			TotalTokens:  30,
+		},
+	})
+
+	if err := stats.Persist(storageDir); err != nil {
+		t.Fatalf("persist request stats: %v", err)
+	}
+
+	reloaded := NewRequestStatistics()
+	if err := reloaded.Load(storageDir); err != nil {
+		t.Fatalf("load request stats: %v", err)
+	}
+
+	snapshot := reloaded.Snapshot()
+	details := snapshot.APIs["alpha-key"].Models["gpt-5.4"].Details
+	if len(details) != 1 {
+		t.Fatalf("details len = %d, want 1", len(details))
+	}
+	if details[0].Source != "alpha@example.com" {
+		t.Fatalf("detail source = %q, want alpha@example.com", details[0].Source)
+	}
+	if details[0].Account != "alpha@example.com" {
+		t.Fatalf("detail account = %q, want alpha@example.com", details[0].Account)
+	}
+	if details[0].Tokens.TotalTokens != 30 {
+		t.Fatalf("detail total_tokens = %d, want 30", details[0].Tokens.TotalTokens)
+	}
+}
+
+func TestRequestStatisticsPersistPrunesDetailsOlderThanSevenDays(t *testing.T) {
+	stats := NewRequestStatistics()
+	storageDir := t.TempDir()
+	now := time.Now()
+
+	stats.Record(context.Background(), coreusage.Record{
+		Source:      "alpha@example.com",
+		APIKey:      "alpha-key",
+		Model:       "gpt-5.4",
+		RequestedAt: now.Add(-8 * 24 * time.Hour),
+		Detail:      coreusage.Detail{TotalTokens: 10},
+	})
+	stats.Record(context.Background(), coreusage.Record{
+		Source:      "alpha@example.com",
+		APIKey:      "alpha-key",
+		Model:       "gpt-5.4",
+		RequestedAt: now.Add(-2 * time.Hour),
+		Detail:      coreusage.Detail{TotalTokens: 20},
+	})
+
+	if err := stats.Persist(storageDir); err != nil {
+		t.Fatalf("persist request stats: %v", err)
+	}
+
+	reloaded := NewRequestStatistics()
+	if err := reloaded.Load(storageDir); err != nil {
+		t.Fatalf("load request stats: %v", err)
+	}
+
+	snapshot := reloaded.Snapshot()
+	details := snapshot.APIs["alpha-key"].Models["gpt-5.4"].Details
+	if len(details) != 1 {
+		t.Fatalf("details len = %d, want 1", len(details))
+	}
+	if details[0].Tokens.TotalTokens != 20 {
+		t.Fatalf("persisted detail total_tokens = %d, want 20", details[0].Tokens.TotalTokens)
+	}
+	if snapshot.TotalRequests != 2 {
+		t.Fatalf("total requests = %d, want 2", snapshot.TotalRequests)
+	}
+	if snapshot.TotalTokens != 30 {
+		t.Fatalf("total tokens = %d, want 30", snapshot.TotalTokens)
+	}
+}
