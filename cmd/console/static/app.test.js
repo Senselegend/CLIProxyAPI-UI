@@ -8,8 +8,12 @@ const {
   shouldShowOlderLogsControl,
   renderLogs,
   filterLogs,
+  updateAccountFilters,
+  dismissLogsAccountMenu,
+  openLogsAccountMenu,
   setLogVisibleCount,
   setLogsForTest,
+  setAccountsForTest,
   handleRefresh,
   computeQuotaSummaryFromQuotas,
   resolveAccountUsage,
@@ -34,6 +38,7 @@ function escapeHtmlForStub(value) {
 function createElementStub(id = null) {
   let innerHTMLValue = '';
   const listeners = new Map();
+  const attributes = new Map();
   const element = {
     id,
     value: '',
@@ -42,21 +47,34 @@ function createElementStub(id = null) {
     style: {},
     dataset: {},
     disabled: false,
+    hidden: false,
     appendChild() {},
     remove() {},
-    setAttribute() {},
+    contains(target) {
+      return target === element;
+    },
+    setAttribute(name, value) {
+      attributes.set(name, String(value));
+    },
+    getAttribute(name) {
+      return attributes.has(name) ? attributes.get(name) : null;
+    },
+    addEventListener(event, handler) {
+      listeners.set(event, handler);
+    },
+    dispatchEvent(event) {
+      const handler = listeners.get(event && event.type);
+      if (handler) handler(event);
+    },
+    click() {
+      const handler = listeners.get('click');
+      if (handler) handler({ type: 'click', target: element });
+    },
     classList: {
       add() {},
       remove() {},
       toggle() {},
       contains() { return false; },
-    },
-    addEventListener(event, handler) {
-      listeners.set(event, handler);
-    },
-    click() {
-      const handler = listeners.get('click');
-      if (handler) handler();
     },
     get innerHTML() {
       return innerHTMLValue;
@@ -100,7 +118,11 @@ function createDocumentStub() {
   register('logs-body');
   const footer = register('logs-footer');
   register('logs-search').value = '';
-  register('logs-account-filter').value = 'All Accounts';
+  register('logs-account-filter').value = '';
+  register('logs-account-summary');
+  register('logs-account-menu');
+  register('logs-account-trigger');
+  register('logs-results');
   register('logs-status-filter').value = 'All Status';
   register('metric-requests');
   register('metric-requests-trend');
@@ -261,10 +283,89 @@ test('filterLogs filters full state before render windowing', () => {
 
     const tbody = document.getElementById('logs-body');
 
-    assert.equal((tbody.innerHTML.match(/<tr>/g) || []).length, 40);
-    assert.match(tbody.innerHTML, /error-1/);
-    assert.match(tbody.innerHTML, /error-40/);
-    assert.doesNotMatch(tbody.innerHTML, /success-1/);
+    assert.equal((tbody.innerHTML.match(/request-title/g) || []).length, 40);
+    assert.match(tbody.innerHTML, /error 1/);
+    assert.match(tbody.innerHTML, /error 40/);
+    assert.doesNotMatch(tbody.innerHTML, /success 1/);
+  } finally {
+    delete global.document;
+  }
+});
+
+test('renderLogs uses table-like request grouping without visible request ids', () => {
+  global.document = createDocumentStub();
+  setLogVisibleCount(50);
+
+  try {
+    renderLogs([
+      {
+        id: 'req_8f3k2j1h',
+        account: 'openai-main',
+        model: 'gpt-5.4',
+        transport: 'http',
+        latency: '234ms',
+        status: 'success',
+        time: '41s ago',
+        message: 'Request completed successfully.',
+      },
+    ]);
+
+    const tbody = document.getElementById('logs-body');
+    assert.match(tbody.innerHTML, /request-title/);
+    assert.match(tbody.innerHTML, /Request completed successfully\./);
+    assert.match(tbody.innerHTML, /account-name/);
+    assert.match(tbody.innerHTML, /model-name/);
+    assert.doesNotMatch(tbody.innerHTML, /req_8f3k2j1h/);
+  } finally {
+    delete global.document;
+  }
+});
+
+test('filterLogs supports multi-select account filtering', () => {
+  global.document = createDocumentStub();
+  setLogVisibleCount(50);
+
+  try {
+    setLogsForTest([
+      {
+        id: 'log-1',
+        account: 'alpha',
+        model: 'gpt-5.4',
+        transport: 'http',
+        latency: '111ms',
+        status: 'success',
+        time: '5s ago',
+        message: 'alpha message',
+      },
+      {
+        id: 'log-2',
+        account: 'beta',
+        model: 'gpt-5.4',
+        transport: 'http',
+        latency: '222ms',
+        status: 'error',
+        time: '6s ago',
+        message: 'beta message',
+      },
+      {
+        id: 'log-3',
+        account: 'gamma',
+        model: 'gpt-5.4',
+        transport: 'http',
+        latency: '333ms',
+        status: 'success',
+        time: '7s ago',
+        message: 'gamma message',
+      },
+    ]);
+
+    document.getElementById('logs-account-filter').value = 'alpha,beta';
+    filterLogs();
+
+    const tbody = document.getElementById('logs-body');
+    assert.match(tbody.innerHTML, /alpha/);
+    assert.match(tbody.innerHTML, /beta/);
+    assert.doesNotMatch(tbody.innerHTML, /gamma/);
   } finally {
     delete global.document;
   }
@@ -906,9 +1007,9 @@ test('renderLogs renders 50 rows with a show older footer when more rows exist',
     const tbody = document.getElementById('logs-body');
     const footer = document.getElementById('logs-footer');
 
-    assert.equal((tbody.innerHTML.match(/<tr>/g) || []).length, 50);
-    assert.match(tbody.innerHTML, /log-71/);
-    assert.match(tbody.innerHTML, /log-120/);
+    assert.equal((tbody.innerHTML.match(/request-title/g) || []).length, 50);
+    assert.match(tbody.innerHTML, /message 71/);
+    assert.match(tbody.innerHTML, /message 120/);
     assert.equal(document.getElementById('logs-show-older').id, 'logs-show-older');
     assert.match(footer.innerHTML, /Show 50 older/);
   } finally {
@@ -928,9 +1029,92 @@ test('clicking show older expands the rendered logs window to 100 rows', () => {
 
     const tbody = document.getElementById('logs-body');
 
-    assert.equal((tbody.innerHTML.match(/<tr>/g) || []).length, 100);
-    assert.match(tbody.innerHTML, /log-21/);
-    assert.match(tbody.innerHTML, /log-120/);
+    assert.equal((tbody.innerHTML.match(/request-title/g) || []).length, 100);
+    assert.match(tbody.innerHTML, /message 21/);
+    assert.match(tbody.innerHTML, /message 120/);
+  } finally {
+    delete global.document;
+  }
+});
+
+test('filterLogs resets expanded log window back to 50 rows', () => {
+  global.document = createDocumentStub();
+  setLogVisibleCount(50);
+  const logs = [
+    ...Array.from({ length: 120 }, (_, index) => ({
+      id: `success-${index + 1}`,
+      account: 'alpha',
+      model: 'gpt-5.4',
+      transport: 'http',
+      latency: '111ms',
+      status: 'success',
+      time: `${index + 1}s ago`,
+      message: `success message ${index + 1}`,
+    })),
+    ...Array.from({ length: 120 }, (_, index) => ({
+      id: `error-${index + 1}`,
+      account: 'beta',
+      model: 'gpt-5.4',
+      transport: 'http',
+      latency: '222ms',
+      status: 'error',
+      time: `${index + 121}s ago`,
+      message: `error message ${index + 1}`,
+    })),
+  ];
+
+  try {
+    setLogsForTest(logs);
+    renderLogs(logs);
+    document.getElementById('logs-show-older').click();
+    document.getElementById('logs-status-filter').value = 'Error';
+    filterLogs();
+
+    const tbody = document.getElementById('logs-body');
+
+    assert.equal((tbody.innerHTML.match(/request-title/g) || []).length, 50);
+    assert.match(tbody.innerHTML, /error message 71/);
+    assert.match(tbody.innerHTML, /error message 120/);
+    assert.doesNotMatch(tbody.innerHTML, /error message 70/);
+  } finally {
+    delete global.document;
+  }
+});
+
+test('updateAccountFilters prunes stale selected accounts that no longer exist', () => {
+  global.document = createDocumentStub();
+
+  try {
+    document.getElementById('logs-account-filter').value = 'alpha,beta';
+    setAccountsForTest([
+      { id: 'alpha.json', email: 'alpha' },
+      { id: 'gamma.json', email: 'gamma' },
+    ]);
+
+    updateAccountFilters();
+
+    assert.equal(document.getElementById('logs-account-filter').value, 'alpha');
+    assert.equal(document.getElementById('logs-account-summary').textContent, 'alpha');
+  } finally {
+    delete global.document;
+  }
+});
+
+test('dismissLogsAccountMenu closes the account dropdown and resets trigger state', () => {
+  global.document = createDocumentStub();
+
+  try {
+    openLogsAccountMenu();
+    const trigger = document.getElementById('logs-account-trigger');
+    const menu = document.getElementById('logs-account-menu');
+
+    assert.equal(trigger.getAttribute('aria-expanded'), 'true');
+    assert.equal(menu.hidden, false);
+
+    dismissLogsAccountMenu();
+
+    assert.equal(trigger.getAttribute('aria-expanded'), 'false');
+    assert.equal(menu.hidden, true);
   } finally {
     delete global.document;
   }
