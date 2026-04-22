@@ -163,7 +163,19 @@
             </button>
             <div class="logs-account-menu" id="logs-account-menu" hidden></div>
           </div>
-          <select class="logs-filter" id="logs-status-filter"><option>All Status</option><option>Success</option><option>Error</option><option>Warning</option></select>
+          <div class="logs-status-filter-wrap">
+            <input type="hidden" id="logs-status-filter" value="All Status">
+            <button type="button" class="logs-filter logs-status-trigger" id="logs-status-trigger" aria-haspopup="true" aria-expanded="false">
+              <span id="logs-status-summary">All Status</span>
+              <span class="logs-status-caret">▾</span>
+            </button>
+            <div class="logs-status-menu" id="logs-status-menu" hidden>
+              <button type="button" class="logs-status-option active" data-status-value="All Status">All Status</button>
+              <button type="button" class="logs-status-option" data-status-value="Success">Success</button>
+              <button type="button" class="logs-status-option" data-status-value="Error">Error</button>
+              <button type="button" class="logs-status-option" data-status-value="Warning">Warning</button>
+            </div>
+          </div>
           <div class="logs-results" id="logs-results"></div>
         </div>
         <div class="logs-table-wrap">

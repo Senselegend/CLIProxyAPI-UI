@@ -312,6 +312,7 @@
           dismissLogsAccountMenu();
         } else {
           openLogsAccountMenu();
+          dismissLogsStatusMenu();
         }
       });
       logsAccountMenu.addEventListener('change', (event) => {
@@ -323,21 +324,44 @@
         state.logVisibleCount = LOGS_PAGE_SIZE;
         filterLogs();
       });
+    }
+
+    const logsStatusFilter = document.getElementById('logs-status-filter');
+    const logsStatusTrigger = document.getElementById('logs-status-trigger');
+    const logsStatusMenu = document.getElementById('logs-status-menu');
+    if (logsStatusTrigger && logsStatusMenu && logsStatusFilter) {
+      logsStatusTrigger.addEventListener('click', () => {
+        const expanded = logsStatusTrigger.getAttribute('aria-expanded') === 'true';
+        if (expanded) {
+          dismissLogsStatusMenu();
+        } else {
+          openLogsStatusMenu();
+          dismissLogsAccountMenu();
+        }
+      });
+      logsStatusMenu.addEventListener('click', (event) => {
+        const option = event.target && event.target.closest('[data-status-value]');
+        if (!option) return;
+        setLogsStatusFilterValue(option.dataset.statusValue || 'All Status');
+        state.logVisibleCount = LOGS_PAGE_SIZE;
+        filterLogs();
+        dismissLogsStatusMenu();
+      });
       document.addEventListener('click', (event) => {
-        if (logsAccountMenu.hidden) return;
-        if (logsAccountTrigger.contains(event.target) || logsAccountMenu.contains(event.target)) return;
-        dismissLogsAccountMenu();
+        if (!logsAccountMenu.hidden && !logsAccountTrigger.contains(event.target) && !logsAccountMenu.contains(event.target)) {
+          dismissLogsAccountMenu();
+        }
+        if (!logsStatusMenu.hidden && !logsStatusTrigger.contains(event.target) && !logsStatusMenu.contains(event.target)) {
+          dismissLogsStatusMenu();
+        }
       });
       document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') {
           dismissLogsAccountMenu();
+          dismissLogsStatusMenu();
         }
       });
     }
-    document.getElementById('logs-status-filter').addEventListener('change', () => {
-      state.logVisibleCount = LOGS_PAGE_SIZE;
-      filterLogs();
-    });
 
     // Add account modal
     document.getElementById('add-account-btn').addEventListener('click', () => {
@@ -1777,6 +1801,44 @@
       return;
     }
     summary.textContent = `${selected[0]} +${selected.length - 1}`;
+  }
+
+  function setLogsStatusFilterValue(value) {
+    const filter = document.getElementById('logs-status-filter');
+    const summary = document.getElementById('logs-status-summary');
+    const menu = document.getElementById('logs-status-menu');
+    const normalized = value || 'All Status';
+    if (filter) {
+      filter.value = normalized;
+    }
+    if (summary) {
+      summary.textContent = normalized;
+    }
+    if (menu) {
+      menu.querySelectorAll('[data-status-value]').forEach(option => {
+        const isActive = (option.dataset.statusValue || 'All Status') === normalized;
+        option.classList.toggle('active', isActive);
+        option.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      });
+    }
+  }
+
+  function openLogsStatusMenu() {
+    const trigger = document.getElementById('logs-status-trigger');
+    const menu = document.getElementById('logs-status-menu');
+    if (!trigger || !menu) return;
+    trigger.setAttribute('aria-expanded', 'true');
+    trigger.classList.add('open');
+    menu.hidden = false;
+  }
+
+  function dismissLogsStatusMenu() {
+    const trigger = document.getElementById('logs-status-trigger');
+    const menu = document.getElementById('logs-status-menu');
+    if (!trigger || !menu) return;
+    trigger.setAttribute('aria-expanded', 'false');
+    trigger.classList.remove('open');
+    menu.hidden = true;
   }
 
   function restoreCachedLogs() {
