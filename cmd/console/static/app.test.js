@@ -10,6 +10,7 @@ const {
   filterLogs,
   setLogVisibleCount,
   setLogsForTest,
+  handleRefresh,
   computeQuotaSummaryFromQuotas,
   resolveAccountUsage,
 } = require('./app.js');
@@ -30,6 +31,19 @@ function createElementStub(id = null) {
     id,
     value: '',
     textContent: '',
+    className: '',
+    style: {},
+    dataset: {},
+    disabled: false,
+    appendChild() {},
+    remove() {},
+    setAttribute() {},
+    classList: {
+      add() {},
+      remove() {},
+      toggle() {},
+      contains() { return false; },
+    },
     addEventListener(event, handler) {
       listeners.set(event, handler);
     },
@@ -61,6 +75,27 @@ function createDocumentStub() {
   register('logs-search').value = '';
   register('logs-account-filter').value = 'All Accounts';
   register('logs-status-filter').value = 'All Status';
+  register('metric-requests');
+  register('metric-requests-trend');
+  register('metric-tokens');
+  register('metric-tokens-trend');
+  register('metric-cost');
+  register('metric-cost-trend');
+  register('metric-errors');
+  register('metric-errors-trend');
+  register('active-accounts-count');
+  register('quota-5h-percent');
+  register('quota-5h-remaining');
+  register('quota-5h-ring', { ...createElementStub('quota-5h-ring'), style: {}, getAttribute(name) { return name === 'r' ? '45' : null; } });
+  register('quota-7d-percent');
+  register('quota-7d-remaining');
+  register('quota-7d-ring', { ...createElementStub('quota-7d-ring'), style: {}, getAttribute(name) { return name === 'r' ? '45' : null; } });
+  register('quota-5h-legend');
+  register('quota-7d-legend');
+  register('dashboard-accounts-grid');
+  register('accounts-list');
+  register('accounts-count');
+  register('account-detail-panel');
 
   Object.defineProperty(footer, 'innerHTML', {
     get() {
@@ -78,9 +113,15 @@ function createDocumentStub() {
   });
 
   return {
+    body: createElementStub('body'),
+    documentElement: { setAttribute() {} },
     createElement() {
       let text = '';
       return {
+        style: {},
+        className: '',
+        appendChild() {},
+        remove() {},
         get textContent() {
           return text;
         },
@@ -94,6 +135,12 @@ function createDocumentStub() {
     },
     getElementById(id) {
       return elements.get(id) || null;
+    },
+    querySelector() {
+      return null;
+    },
+    querySelectorAll() {
+      return [];
     },
   };
 }
@@ -320,6 +367,69 @@ test('resolveAccountUsage returns usage for an exact account id match', () => {
   };
 
   assert.equal(resolveAccountUsage(state, acc), expectedUsage);
+});
+
+test('handleRefresh reloads data, triggers account recheck, and reloads accounts again', async () => {
+  const calls = [];
+  const originalSetTimeout = global.setTimeout;
+  global.document = createDocumentStub();
+  global.setTimeout = (fn) => {
+    fn();
+    return 0;
+  };
+  global.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method || 'GET' });
+    if (String(url).includes('/usage')) return { ok: true, json: async () => ({ usage: {} }) };
+    if (String(url).includes('/account-usage')) return { ok: true, json: async () => ({ by_account: {} }) };
+    if (String(url).includes('/auth-files') && !String(url).includes('/recheck')) return { ok: true, json: async () => ({ files: [] }) };
+    if (String(url).includes('/quotas')) return { ok: true, json: async () => ({ quotas: [] }) };
+    if (String(url).includes('/logs')) return { ok: true, json: async () => ({ logs: [] }) };
+    if (String(url).includes('/request-activity')) return { ok: true, json: async () => ({ entries: [] }) };
+    if (String(url).includes('/auth-files/recheck')) return { ok: true, json: async () => ({ triggered: 2 }) };
+    throw new Error(`unexpected url ${url}`);
+  };
+
+  try {
+    await handleRefresh();
+    const authFileCalls = calls.filter(call => call.url.includes('/auth-files') && !call.url.includes('/recheck'));
+    const recheckIndex = calls.findIndex(call => call.url.includes('/auth-files/recheck') && call.method === 'POST');
+
+    assert.equal(authFileCalls.length >= 2, true);
+    assert.equal(recheckIndex > -1, true);
+    assert.equal(calls.findIndex(call => call.url.includes('/auth-files') && !call.url.includes('/recheck')) < recheckIndex, true);
+    assert.equal(calls.slice(recheckIndex + 1).some(call => call.url.includes('/auth-files') && !call.url.includes('/recheck')), true);
+  } finally {
+    delete global.fetch;
+    delete global.document;
+    global.setTimeout = originalSetTimeout;
+  }
+});
+
+test('handleRefresh still resolves when account recheck fails', async () => {
+  const originalSetTimeout = global.setTimeout;
+  global.document = createDocumentStub();
+  global.setTimeout = (fn) => {
+    fn();
+    return 0;
+  };
+  global.fetch = async (url, options = {}) => {
+    if (String(url).includes('/usage')) return { ok: true, json: async () => ({ usage: {} }) };
+    if (String(url).includes('/account-usage')) return { ok: true, json: async () => ({ by_account: {} }) };
+    if (String(url).includes('/auth-files') && !String(url).includes('/recheck')) return { ok: true, json: async () => ({ files: [] }) };
+    if (String(url).includes('/quotas')) return { ok: true, json: async () => ({ quotas: [] }) };
+    if (String(url).includes('/logs')) return { ok: true, json: async () => ({ logs: [] }) };
+    if (String(url).includes('/request-activity')) return { ok: true, json: async () => ({ entries: [] }) };
+    if (String(url).includes('/auth-files/recheck')) return { ok: false, status: 500, json: async () => ({ error: 'boom' }) };
+    throw new Error(`unexpected url ${url}`);
+  };
+
+  try {
+    await assert.doesNotReject(handleRefresh());
+  } finally {
+    delete global.fetch;
+    delete global.document;
+    global.setTimeout = originalSetTimeout;
+  }
 });
 
 test('getVisibleLogs returns newest 50 rows by default', () => {

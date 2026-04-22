@@ -264,7 +264,7 @@
     });
 
     // Refresh button
-    document.getElementById('refresh-btn').addEventListener('click', loadData);
+    document.getElementById('refresh-btn').addEventListener('click', handleRefresh);
 
     // Theme buttons
     document.querySelectorAll('.theme-btn').forEach(btn => {
@@ -459,6 +459,19 @@
       loadLogs()
     ]);
     hideLoadingState();
+  }
+
+  async function triggerAccountRecheck() {
+    return await apiFetch('/auth-files/recheck', { method: 'POST' });
+  }
+
+  async function handleRefresh() {
+    await loadData();
+    const recheck = await triggerAccountRecheck().catch(() => null);
+    if (recheck && recheck.triggered > 0) {
+      showToast(`Rechecking ${recheck.triggered} accounts`, 'info');
+    }
+    await loadAccounts();
   }
 
   function buildDashboardUsage(data, accountData) {
@@ -2008,6 +2021,7 @@
       filterLogs,
       setLogVisibleCount,
       setLogsForTest,
+      handleRefresh,
       computeQuotaSummaryFromQuotas,
       resolveAccountUsage,
     };
