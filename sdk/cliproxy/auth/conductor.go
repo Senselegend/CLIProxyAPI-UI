@@ -235,6 +235,24 @@ func (m *Manager) syncScheduler() {
 	m.syncSchedulerFromSnapshot(m.snapshotAuths())
 }
 
+type AuthRecheckSummary struct {
+	Considered         int `json:"considered"`
+	Triggered          int `json:"triggered"`
+	AlreadyInFlight    int `json:"already_in_flight"`
+	SkippedRateLimited int `json:"skipped_rate_limited"`
+	SkippedDisabled    int `json:"skipped_disabled"`
+	SkippedDeactivated int `json:"skipped_deactivated"`
+	SkippedNotEligible int `json:"skipped_not_eligible"`
+}
+
+type authRecheckScheduleOutcome int
+
+const (
+	authRecheckNotEligible authRecheckScheduleOutcome = iota
+	authRecheckAlreadyInFlight
+	authRecheckTriggered
+)
+
 func (m *Manager) maybeScheduleAuthRecheck(ctx context.Context, auth *Auth) {
 	if m == nil || auth == nil || auth.ID == "" {
 		return
@@ -245,6 +263,30 @@ func (m *Manager) maybeScheduleAuthRecheck(ctx context.Context, auth *Auth) {
 	if auth.Quota.Exceeded {
 		return
 	}
+	_ = m.scheduleAuthRecheckIfEligible(ctx, auth)
+}
+
+func (m *Manager) scheduleAuthRecheckIfEligible(ctx context.Context, auth *Auth) authRecheckScheduleOutcome {
+	if m == nil || auth == nil || auth.ID == "" {
+		return authRecheckNotEligible
+	}
+	if auth.Disabled {
+		return authRecheckNotEligible
+	}
+	if auth.Status == StatusDeactivated {
+		return authRecheckNotEligible
+	}
+	if auth.Quota.Exceeded || auth.Status == StatusRateLimited {
+		return authRecheckNotEligible
+	}
+	if auth.Status == StatusError && auth.LastError != nil {
+		if auth.LastError.HTTPStatus == http.StatusNotFound || isModelSupportResultError(auth.LastError) {
+			return authRecheckNotEligible
+		}
+	}
+	if auth.Status != StatusError && auth.Status != StatusUnknown {
+		return authRecheckNotEligible
+	}
 
 	now := time.Now()
 	runner := m.recheckRunner
@@ -252,12 +294,12 @@ func (m *Manager) maybeScheduleAuthRecheck(ctx context.Context, auth *Auth) {
 	m.recheckMu.Lock()
 	if _, exists := m.recheckInFlight[auth.ID]; exists {
 		m.recheckMu.Unlock()
-		return
+		return authRecheckAlreadyInFlight
 	}
 	if m.recheckCooldown > 0 {
 		if lastRunAt, ok := m.recheckLastRunAt[auth.ID]; ok && now.Sub(lastRunAt) < m.recheckCooldown {
 			m.recheckMu.Unlock()
-			return
+			return authRecheckAlreadyInFlight
 		}
 	}
 	m.recheckInFlight[auth.ID] = struct{}{}
@@ -266,17 +308,50 @@ func (m *Manager) maybeScheduleAuthRecheck(ctx context.Context, auth *Auth) {
 
 	if runner == nil {
 		m.finishAuthRecheck(auth.ID)
-		return
+		return authRecheckTriggered
 	}
-	detachedCtx := context.Background()
-	if ctx != nil {
-		detachedCtx = context.WithoutCancel(ctx)
+	if ctx == nil {
+		ctx = context.Background()
+	} else {
+		ctx = context.WithoutCancel(ctx)
 	}
 
 	go func() {
 		defer m.finishAuthRecheck(auth.ID)
-		runner(detachedCtx, auth.ID)
+		runner(ctx, auth.ID)
 	}()
+	return authRecheckTriggered
+}
+
+func (m *Manager) TriggerEligibleAuthRechecks(ctx context.Context) AuthRecheckSummary {
+	var summary AuthRecheckSummary
+	for _, auth := range m.snapshotAuths() {
+		if auth == nil {
+			continue
+		}
+		summary.Considered++
+		switch {
+		case auth.Disabled:
+			summary.SkippedDisabled++
+			continue
+		case auth.Status == StatusDeactivated:
+			summary.SkippedDeactivated++
+			continue
+		case auth.Quota.Exceeded || auth.Status == StatusRateLimited:
+			summary.SkippedRateLimited++
+			continue
+		}
+
+		switch m.scheduleAuthRecheckIfEligible(ctx, auth) {
+		case authRecheckTriggered:
+			summary.Triggered++
+		case authRecheckAlreadyInFlight:
+			summary.AlreadyInFlight++
+		default:
+			summary.SkippedNotEligible++
+		}
+	}
+	return summary
 }
 
 func (m *Manager) runAuthRecheck(ctx context.Context, authID string) {

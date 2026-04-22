@@ -92,26 +92,43 @@ func TestMaybeScheduleAuthRecheck_DeduplicatesByAuthID(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 	m.recheckCooldown = 30 * time.Second
 
-	started := make(chan struct{}, 1)
 	release := make(chan struct{})
+	startedFirst := make(chan struct{})
 	finished := make(chan struct{})
 	calls := make(chan string, 2)
 	m.recheckRunner = func(_ context.Context, authID string) {
 		calls <- authID
-		started <- struct{}{}
+		select {
+		case startedFirst <- struct{}{}:
+		default:
+		}
 		<-release
 		close(finished)
 	}
 
 	m.maybeScheduleAuthRecheck(context.Background(), &Auth{ID: "auth-1", Status: StatusError})
 
-	select {
-	case <-started:
-	case <-time.After(time.Second):
-		t.Fatalf("expected first recheck runner to start")
+	deadline := time.Now().Add(time.Second)
+	for {
+		m.recheckMu.Lock()
+		inFlight := len(m.recheckInFlight)
+		m.recheckMu.Unlock()
+		if inFlight == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected recheck to be marked in flight")
+		}
+		time.Sleep(time.Millisecond)
 	}
 
 	m.maybeScheduleAuthRecheck(context.Background(), &Auth{ID: "auth-1", Status: StatusError})
+
+	select {
+	case <-startedFirst:
+	case <-time.After(time.Second):
+		t.Fatalf("expected first recheck runner to start")
+	}
 
 	m.recheckMu.Lock()
 	if len(m.recheckInFlight) != 1 {
@@ -125,7 +142,7 @@ func TestMaybeScheduleAuthRecheck_DeduplicatesByAuthID(t *testing.T) {
 		if got != "auth-1" {
 			t.Fatalf("runner authID = %q, want %q", got, "auth-1")
 		}
-	default:
+	case <-time.After(time.Second):
 		t.Fatalf("expected one runner invocation")
 	}
 
@@ -254,6 +271,157 @@ func TestMarkResult_AuthErrorSchedulesBackgroundRecheck(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatalf("expected recheck trigger")
+	}
+}
+
+func TestManager_TriggerEligibleAuthRechecks_SkipsQuotaDisabledDeactivatedAndNotEligible(t *testing.T) {
+	m := NewManager(nil, nil, nil)
+	m.recheckCooldown = 0
+	triggered := make(chan string, 10)
+	m.recheckRunner = func(_ context.Context, authID string) { triggered <- authID }
+
+	now := time.Now()
+	m.auths = map[string]*Auth{
+		"error-auth": {
+			ID:          "error-auth",
+			Status:      StatusError,
+			Unavailable: true,
+			LastError:   &Error{HTTPStatus: 500, Message: "temporary failure"},
+		},
+		"quota-auth": {
+			ID:          "quota-auth",
+			Status:      StatusError,
+			Unavailable: true,
+			Quota:       QuotaState{Exceeded: true},
+			LastError:   &Error{HTTPStatus: 429, Message: "quota exhausted"},
+		},
+		"disabled-auth": {
+			ID:       "disabled-auth",
+			Status:   StatusError,
+			Disabled: true,
+		},
+		"deactivated-auth": {
+			ID:     "deactivated-auth",
+			Status: StatusDeactivated,
+		},
+		"unknown-auth": {
+			ID:          "unknown-auth",
+			Status:      StatusUnknown,
+			Unavailable: true,
+			UpdatedAt:   now,
+		},
+		"not-found-auth": {
+			ID:          "not-found-auth",
+			Status:      StatusError,
+			Unavailable: true,
+			LastError:   &Error{HTTPStatus: 404, Message: "model not found"},
+		},
+		"unsupported-auth": {
+			ID:          "unsupported-auth",
+			Status:      StatusError,
+			Unavailable: true,
+			LastError:   &Error{HTTPStatus: 400, Message: "requested model is unsupported"},
+		},
+	}
+
+	summary := m.TriggerEligibleAuthRechecks(context.Background())
+
+	if summary.Considered != 7 {
+		t.Fatalf("Considered = %d, want 7", summary.Considered)
+	}
+	if summary.Triggered != 2 {
+		t.Fatalf("Triggered = %d, want 2", summary.Triggered)
+	}
+	if summary.SkippedRateLimited != 1 {
+		t.Fatalf("SkippedRateLimited = %d, want 1", summary.SkippedRateLimited)
+	}
+	if summary.SkippedDisabled != 1 {
+		t.Fatalf("SkippedDisabled = %d, want 1", summary.SkippedDisabled)
+	}
+	if summary.SkippedDeactivated != 1 {
+		t.Fatalf("SkippedDeactivated = %d, want 1", summary.SkippedDeactivated)
+	}
+	if summary.SkippedNotEligible != 2 {
+		t.Fatalf("SkippedNotEligible = %d, want 2", summary.SkippedNotEligible)
+	}
+
+	got := map[string]bool{}
+	for range 2 {
+		select {
+		case authID := <-triggered:
+			got[authID] = true
+		case <-time.After(time.Second):
+			t.Fatalf("expected two triggered auth rechecks")
+		}
+	}
+	if !got["error-auth"] {
+		t.Fatalf("expected error-auth to be rechecked")
+	}
+	if !got["unknown-auth"] {
+		t.Fatalf("expected unknown-auth to be rechecked")
+	}
+}
+
+func TestManager_TriggerEligibleAuthRechecks_ReportsAlreadyInFlight(t *testing.T) {
+	m := NewManager(nil, nil, nil)
+	m.recheckCooldown = 0
+	m.recheckRunner = func(context.Context, string) {}
+	m.auths = map[string]*Auth{
+		"error-auth": {
+			ID:          "error-auth",
+			Status:      StatusError,
+			Unavailable: true,
+			LastError:   &Error{HTTPStatus: 500, Message: "temporary failure"},
+		},
+	}
+
+	m.recheckMu.Lock()
+	m.recheckInFlight["error-auth"] = struct{}{}
+	m.recheckMu.Unlock()
+
+	summary := m.TriggerEligibleAuthRechecks(context.Background())
+
+	if summary.Considered != 1 {
+		t.Fatalf("Considered = %d, want 1", summary.Considered)
+	}
+	if summary.Triggered != 0 {
+		t.Fatalf("Triggered = %d, want 0", summary.Triggered)
+	}
+	if summary.AlreadyInFlight != 1 {
+		t.Fatalf("AlreadyInFlight = %d, want 1", summary.AlreadyInFlight)
+	}
+}
+
+func TestManager_TriggerEligibleAuthRechecks_CooldownCountsAsAlreadyInFlight(t *testing.T) {
+	m := NewManager(nil, nil, nil)
+	m.recheckCooldown = time.Minute
+	m.recheckRunner = func(context.Context, string) {}
+	m.auths = map[string]*Auth{
+		"error-auth": {
+			ID:          "error-auth",
+			Status:      StatusError,
+			Unavailable: true,
+			LastError:   &Error{HTTPStatus: 500, Message: "temporary failure"},
+		},
+	}
+
+	m.recheckMu.Lock()
+	m.recheckLastRunAt["error-auth"] = time.Now()
+	m.recheckMu.Unlock()
+
+	summary := m.TriggerEligibleAuthRechecks(context.Background())
+
+	if summary.Considered != 1 {
+		t.Fatalf("Considered = %d, want 1", summary.Considered)
+	}
+	if summary.Triggered != 0 {
+		t.Fatalf("Triggered = %d, want 0", summary.Triggered)
+	}
+	if summary.AlreadyInFlight != 1 {
+		t.Fatalf("AlreadyInFlight = %d, want 1", summary.AlreadyInFlight)
+	}
+	if summary.SkippedNotEligible != 0 {
+		t.Fatalf("SkippedNotEligible = %d, want 0", summary.SkippedNotEligible)
 	}
 }
 

@@ -45,6 +45,7 @@ go build -o test-output ./cmd/server && rm test-output # Verify compile (REQUIRE
 - `internal/translator/` — Provider protocol translators (and shared `common`)
 - `internal/registry/` — Model registry + remote updater (`StartModelsUpdater`); `--local-model` disables remote updates
 - `internal/store/` — Storage implementations and secret resolution
+- `cmd/console/static/` — Primary browser dashboard/frontend assets and Node tests for the current UI
 - `internal/managementasset/` — Config snapshots and management assets
 - `internal/cache/` — Request signature caching
 - `internal/watcher/` — Config hot-reload and watchers
@@ -60,7 +61,9 @@ go build -o test-output ./cmd/server && rm test-output # Verify compile (REQUIRE
 - If editing code that already contains non-English comments, translate them to English (don’t add new non-English comments)
 - For user-visible strings, keep the existing language used in that file/area
 - New Markdown docs should be in English unless the file is explicitly language-specific (e.g. `README_CN.md`)
-- For management/dashboard fork work, prefer an overlay approach: keep UI-specific behavior in `cmd/console/static`, `internal/usage`, or adjacent new files instead of expanding core management APIs unless it is truly necessary.
+- Treat `cmd/console/static` as the primary browser UI target for dashboard/management frontend work.
+- `internal/dashboardasset/*` is legacy/alternate UI code; do not default new frontend changes there unless a task explicitly asks for it.
+- For management/dashboard work, prefer an overlay approach: keep UI-specific behavior in `cmd/console/static`, `internal/usage`, or adjacent new files instead of expanding core management APIs unless it is truly necessary.
 - For management settings UI, prefer reusing the existing `GET/PUT /v0/management/config.yaml` flow and editing YAML-compatible fields there rather than adding one-off backend endpoints in `internal/api/handlers/management/config_basic.go`.
 - Do not store console/usage helper state inside the auth directory in a way that can be mistaken for auth JSON files. Keep such files outside the auth file scan path.
 - As a rule, do not make standalone changes to `internal/translator/`. You may modify it only as part of broader changes elsewhere.
@@ -73,3 +76,16 @@ go build -o test-output ./cmd/server && rm test-output # Verify compile (REQUIRE
 - Use logrus structured logging; avoid leaking secrets/tokens in logs
 - Avoid panics in HTTP handlers; prefer logged errors and meaningful HTTP status codes
 - Timeouts are allowed only during credential acquisition; after an upstream connection is established, do not set timeouts for any subsequent network behavior. Intentional exceptions that must remain allowed are the Codex websocket liveness deadlines in `internal/runtime/executor/codex_websockets_executor.go`, the wsrelay session deadlines in `internal/wsrelay/session.go`, the management APICall timeout in `internal/api/handlers/management/api_tools.go`, and the `cmd/fetch_antigravity_models` utility timeouts
+
+## Verification Expectations
+- After Go changes:
+  ```bash
+  gofmt -w .
+  go build -o test-output ./cmd/server && rm test-output
+  ```
+- After current dashboard/frontend changes:
+  ```bash
+  node --test cmd/console/static/app.test.js
+  node --test cmd/console/static_tests/app.test.js
+  go build -o test-output ./cmd/server && rm test-output
+  ```

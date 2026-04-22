@@ -26,7 +26,7 @@ Default config is `config.yaml`; template is `config.example.yaml`. `.env` is lo
 ## Fork Sync Workflow
 
 - Keep `main` as a clean mirror of `upstream/main`.
-- Keep local/custom work on a separate branch (current branch: `fork/local-customizations`).
+- Keep local/custom work on a separate branch (current branch: `fork/webui`).
 - To update from upstream without losing local work:
 
 ```bash
@@ -87,47 +87,40 @@ git rebase main
 - `internal/watcher/` — Config/auth hot reload and diffs
 - `internal/wsrelay/` — WebSocket relay sessions
 - `internal/tui/` — Bubbletea TUI
-- `internal/dashboardasset/` — Embedded browser dashboard served at `/dashboard`
+- `cmd/console/static/` — Primary browser dashboard/frontend assets and Node tests for the current UI
+- `internal/dashboardasset/` — Legacy embedded dashboard assets; do not treat as the primary UI target unless a task explicitly says so
 - `internal/managementasset/` — Management/config snapshot assets
 - `sdk/cliproxy/` — Embeddable proxy service/builder/watchers/pipeline
 - `sdk/*` — SDK-facing helpers/mirrors for auth, config, access, API, translation, logging
 - `test/` — Cross-module integration tests
 - `examples/` — Usage examples
-- `mock-preview/dashboard-v2/` — Local dashboard mock playground, not production
 
 ## Dashboard Frontend Direction
 
-The current production dashboard is embedded under:
+The current primary browser UI lives under:
 
-- `internal/dashboardasset/static/index.html`
-- `internal/dashboardasset/static/app.css`
-- `internal/dashboardasset/static/app.js`
-- `internal/dashboardasset/static/app_shell_helpers.js`
+- `cmd/console/static/index.html`
+- `cmd/console/static/app.js`
+- `cmd/console/static/app.test.js`
+- `cmd/console/static_tests/app.test.js`
 
-Important: the current `app.js` mixes API routes, raw payload handling, state, rendering, mutations, OAuth flow UI, filtering, and settings wiring. Do not make that coupling worse.
+Treat `cmd/console/static/*` as the default frontend target for dashboard and management UI work unless a task explicitly says to work on legacy assets.
 
-Planned architecture is a frontend overlay over management APIs:
+`internal/dashboardasset/*` exists as legacy/alternate embedded dashboard code. Do not default new UI work there.
 
-- `dashboard_api.js` — route map, fetch wrapper, HTTP errors, mutation calls
-- `dashboard_contract.js` — normalize raw backend payloads into stable frontend models
-- `dashboard_state.js` — initial state, transitions, selectors
-- `dashboard_views.js` — render normalized models only
-- `dashboard_bootstrap.js` — init, event wiring, polling, navigation
-- `app.js` — thin compatibility entrypoint
+Important: the current `cmd/console/static/app.js` mixes API routes, payload handling, state, rendering, OAuth UI, filtering, settings wiring, and logs/account interactions. Do not make that coupling worse.
 
-Reference plan:
-
-- `docs/superpowers/plans/2026-04-19-frontend-overlay-rewrite.md`
+When touching the frontend, prefer small local helpers and narrow backend support over inventing fake UI state.
 
 Rules for dashboard work:
-- Keep visual redesign separate from architecture migration.
-- Build the dashboard only around capabilities this project actually has.
-- Do not invent UI controls, statuses, metrics, or workflows that are not backed by current project behavior.
-- If a good dashboard requires small backend support, add narrow management/API changes instead of faking state in the frontend.
+- Keep visual redesign separate from behavior or architecture changes.
+- Build the UI only around capabilities this project actually has.
+- Do not invent controls, statuses, metrics, or workflows that are not backed by current project behavior.
+- If the UI needs extra backend support, add the smallest management/API change that exposes real state.
 - Do not render fake settings or fake statuses.
-- Allowed account status vocabulary: `active`, `paused`, `rate_limited`, `deactivated`, `unknown`.
+- Allowed account status vocabulary in the UI: `active`, `paused`, `disabled`, `rate_limited`, `deactivated`, `syncing`, `error`.
 - Settings UI should render only controls backed by real management endpoints.
-- If upstream backend changes payload shapes, update the adapter/contract layer first, not renderers.
+- If backend payload shapes change, update the frontend normalization/derivation path before tweaking rendering.
 
 ## High-Risk Areas
 
@@ -146,11 +139,11 @@ gofmt -w .
 go build -o test-output ./cmd/server && rm test-output
 ```
 
-After dashboard frontend changes:
+After dashboard/frontend changes in the current UI:
 
 ```bash
-node --test internal/dashboardasset/static/app.test.js
-node --test internal/dashboardasset/static/app_shell_helpers.test.js
+node --test cmd/console/static/app.test.js
+node --test cmd/console/static_tests/app.test.js
 go build -o test-output ./cmd/server && rm test-output
 ```
 
