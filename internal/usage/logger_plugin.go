@@ -76,6 +76,7 @@ type RequestStatistics struct {
 	requestsByHour map[int]int64
 	tokensByDay    map[string]int64
 	tokensByHour   map[int]int64
+	failuresByDay  map[string]int64
 }
 
 // apiStats holds aggregated metrics for a single API key.
@@ -125,6 +126,7 @@ type StatisticsSnapshot struct {
 	RequestsByHour map[string]int64 `json:"requests_by_hour"`
 	TokensByDay    map[string]int64 `json:"tokens_by_day"`
 	TokensByHour   map[string]int64 `json:"tokens_by_hour"`
+	FailuresByDay  map[string]int64 `json:"failures_by_day,omitempty"`
 }
 
 // APISnapshot summarises metrics for a single API key.
@@ -154,6 +156,7 @@ func NewRequestStatistics() *RequestStatistics {
 		requestsByHour: make(map[int]int64),
 		tokensByDay:    make(map[string]int64),
 		tokensByHour:   make(map[int]int64),
+		failuresByDay:  make(map[string]int64),
 	}
 }
 
@@ -217,6 +220,9 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	s.requestsByHour[hourKey]++
 	s.tokensByDay[dayKey] += totalTokens
 	s.tokensByHour[hourKey] += totalTokens
+	if failed {
+		s.failuresByDay[dayKey]++
+	}
 }
 
 func (s *RequestStatistics) updateAPIStats(stats *apiStats, model string, detail RequestDetail) {
@@ -286,6 +292,11 @@ func (s *RequestStatistics) Snapshot() StatisticsSnapshot {
 	for hour, v := range s.tokensByHour {
 		key := formatHour(hour)
 		result.TokensByHour[key] = v
+	}
+
+	result.FailuresByDay = make(map[string]int64, len(s.failuresByDay))
+	for k, v := range s.failuresByDay {
+		result.FailuresByDay[k] = v
 	}
 
 	return result
@@ -385,6 +396,9 @@ func (s *RequestStatistics) recordImported(apiName, modelName string, stats *api
 	s.requestsByHour[hourKey]++
 	s.tokensByDay[dayKey] += totalTokens
 	s.tokensByHour[hourKey] += totalTokens
+	if detail.Failed {
+		s.failuresByDay[dayKey]++
+	}
 }
 
 func dedupKey(apiName, modelName string, detail RequestDetail) string {
@@ -525,6 +539,11 @@ func (s *RequestStatistics) Load(storageDir string) error {
 		if hour, ok := parseSnapshotHourKey(key); ok {
 			s.tokensByHour[hour] = value
 		}
+	}
+
+	s.failuresByDay = make(map[string]int64, len(snapshot.FailuresByDay))
+	for key, value := range snapshot.FailuresByDay {
+		s.failuresByDay[key] = value
 	}
 
 	return nil
