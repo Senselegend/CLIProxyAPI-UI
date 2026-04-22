@@ -305,7 +305,7 @@ test('deriveAccountStatus softens in-flight recovery to syncing', () => {
   assert.deepEqual(status, { key: 'syncing', label: 'syncing' });
 });
 
-test('deriveAccountStatus softens transient unavailable recovery to syncing', () => {
+test('deriveAccountStatus keeps completed transient recovery as error', () => {
   const status = deriveAccountStatus(
     {
       status: 'error',
@@ -316,7 +316,24 @@ test('deriveAccountStatus softens transient unavailable recovery to syncing', ()
     },
     null,
   );
-  assert.deepEqual(status, { key: 'syncing', label: 'syncing' });
+  assert.deepEqual(status, { key: 'error', label: 'error' });
+});
+
+test('deriveAccountStatus does not keep completed recovery cooldown as syncing', () => {
+  const status = deriveAccountStatus(
+    {
+      status: 'error',
+      unavailable: true,
+      next_retry_after: new Date(Date.now() + 60_000).toISOString(),
+      status_message: 'upstream unavailable',
+      recovery: {
+        in_flight: false,
+        last_run_at: new Date(Date.now() - 30_000).toISOString(),
+      },
+    },
+    null,
+  );
+  assert.deepEqual(status, { key: 'error', label: 'error' });
 });
 
 test('normalizeActivityEntries hides request activity entries without accounts', () => {

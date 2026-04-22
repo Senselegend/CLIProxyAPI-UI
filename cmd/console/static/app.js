@@ -868,10 +868,6 @@
       return { key: 'rate_limited', label: 'rate limited' };
     }
 
-    if (recovery.last_run_at) {
-      return { key: 'syncing', label: 'syncing' };
-    }
-
     return { key: 'error', label: 'error' };
   }
 
