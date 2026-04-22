@@ -450,6 +450,31 @@ test('buildDashboardUsage preserves summary payload for top cards', () => {
   assert.equal(usage.summary.last_30_days.cost_usd, 0.7);
 });
 
+test('buildDashboardUsage prefers summary payload from account usage response', () => {
+  const usage = buildDashboardUsage(
+    {
+      usage: {
+        total_requests: 0,
+        total_tokens: 0,
+        failure_count: 0,
+      },
+    },
+    {
+      by_account: {},
+      summary: {
+        lifetime: { requests: 4072, tokens: 391737970, cost_usd: 3917.38, errors: 125 },
+        today: { requests: 20, tokens: 1000, cost_usd: 0.01, errors: 2 },
+        last_7_days: { requests: 100, tokens: 5000, cost_usd: 0.05, errors: 5 },
+        last_30_days: { requests: 300, tokens: 7000, cost_usd: 0.07, errors: 7 },
+      },
+    },
+  );
+
+  assert.equal(usage.summary.lifetime.requests, 4072);
+  assert.equal(usage.summary.lifetime.tokens, 391737970);
+  assert.equal(usage.summary.last_7_days.errors, 5);
+});
+
 test('getInitialSummaryWindow defaults to last_7_days and restores valid saved value', () => {
   assert.equal(getInitialSummaryWindow({ getItem: () => null }), 'last_7_days');
   assert.equal(getInitialSummaryWindow({ getItem: () => 'last_30_days' }), 'last_30_days');

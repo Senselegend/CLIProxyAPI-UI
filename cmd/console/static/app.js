@@ -514,7 +514,8 @@
 
   function buildDashboardUsage(data, accountData) {
     const usage = { ...(data && data.usage ? data.usage : {}) };
-    usage.summary = normalizeSummaryPayload(usage.summary);
+    const summarySource = accountData && accountData.summary ? accountData.summary : usage.summary;
+    usage.summary = normalizeSummaryPayload(summarySource);
 
     if (accountData && accountData.by_account && Object.keys(accountData.by_account).length > 0) {
       const accountAPIs = {};
