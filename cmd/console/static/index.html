@@ -154,16 +154,26 @@
       <section class="logs-section">
         <h2 class="section-title">Request Log</h2>
         <div class="logs-controls">
-          <input type="text" class="logs-search" id="logs-search" placeholder="Search request ID, model, account...">
-          <select class="logs-filter" id="logs-account-filter"><option>All Accounts</option></select>
+          <input type="text" class="logs-search" id="logs-search" placeholder="Search model, account, message...">
+          <div class="logs-account-filter-wrap">
+            <input type="hidden" id="logs-account-filter" value="">
+            <button type="button" class="logs-account-trigger" id="logs-account-trigger" aria-haspopup="true" aria-expanded="false">
+              <span id="logs-account-summary">All Accounts</span>
+              <span class="logs-account-caret">▾</span>
+            </button>
+            <div class="logs-account-menu" id="logs-account-menu" hidden></div>
+          </div>
           <select class="logs-filter" id="logs-status-filter"><option>All Status</option><option>Success</option><option>Error</option><option>Warning</option></select>
+          <div class="logs-results" id="logs-results"></div>
         </div>
-        <table class="logs-table">
-          <thead>
-            <tr><th>ID</th><th>Account</th><th>Model</th><th>Transport</th><th>Latency</th><th>Status</th><th>Time</th><th>Message</th></tr>
-          </thead>
-          <tbody id="logs-body"></tbody>
-        </table>
+        <div class="logs-table-wrap">
+          <table class="logs-table">
+            <thead>
+              <tr><th>Status</th><th>Request</th><th>Account</th><th>Model</th><th>Transport</th><th>Time</th><th>Latency</th></tr>
+            </thead>
+            <tbody id="logs-body"></tbody>
+          </table>
+        </div>
         <div class="logs-footer" id="logs-footer"></div>
       </section>
     </div>

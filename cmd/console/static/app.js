@@ -37,6 +37,7 @@
   let detailCountdownTimer = null;
   let startupSyncPollTimer = null;
   let refreshInFlight = false;
+  let lastLogsFilterSignature = '';
 
   // Icons
   const icons = {
@@ -294,12 +295,49 @@
     let searchTimeout;
     searchInput.addEventListener('input', () => {
       clearTimeout(searchTimeout);
-      searchTimeout = setTimeout(() => filterLogs(), 300);
+      searchTimeout = setTimeout(() => {
+        state.logVisibleCount = LOGS_PAGE_SIZE;
+        filterLogs();
+      }, 300);
     });
 
     // Logs filters
-    document.getElementById('logs-account-filter').addEventListener('change', filterLogs);
-    document.getElementById('logs-status-filter').addEventListener('change', filterLogs);
+    const logsAccountFilter = document.getElementById('logs-account-filter');
+    const logsAccountTrigger = document.getElementById('logs-account-trigger');
+    const logsAccountMenu = document.getElementById('logs-account-menu');
+    if (logsAccountTrigger && logsAccountMenu && logsAccountFilter) {
+      logsAccountTrigger.addEventListener('click', () => {
+        const expanded = logsAccountTrigger.getAttribute('aria-expanded') === 'true';
+        if (expanded) {
+          dismissLogsAccountMenu();
+        } else {
+          openLogsAccountMenu();
+        }
+      });
+      logsAccountMenu.addEventListener('change', (event) => {
+        const target = event.target;
+        if (!target || target.type !== 'checkbox') return;
+        const selected = Array.from(logsAccountMenu.querySelectorAll('input[type="checkbox"]:checked')).map(input => input.value);
+        setLogsSelectedAccounts(selected);
+        updateLogsAccountSummary(selected);
+        state.logVisibleCount = LOGS_PAGE_SIZE;
+        filterLogs();
+      });
+      document.addEventListener('click', (event) => {
+        if (logsAccountMenu.hidden) return;
+        if (logsAccountTrigger.contains(event.target) || logsAccountMenu.contains(event.target)) return;
+        dismissLogsAccountMenu();
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          dismissLogsAccountMenu();
+        }
+      });
+    }
+    document.getElementById('logs-status-filter').addEventListener('change', () => {
+      state.logVisibleCount = LOGS_PAGE_SIZE;
+      filterLogs();
+    });
 
     // Add account modal
     document.getElementById('add-account-btn').addEventListener('click', () => {
@@ -1678,20 +1716,67 @@
     }
   }
 
-  // Update account filters
-  function updateAccountFilters() {
+  function getLogsSelectedAccounts() {
+    const filter = document.getElementById('logs-account-filter');
+    return String(filter && filter.value || '').split(',').map(value => value.trim()).filter(Boolean);
+  }
+
+  function setLogsSelectedAccounts(selected) {
     const filter = document.getElementById('logs-account-filter');
     if (!filter) return;
+    filter.value = Array.isArray(selected) ? selected.join(',') : '';
+  }
 
-    const current = filter.value;
-    filter.innerHTML = '<option>All Accounts</option>' +
-      state.accounts.map(acc =>
-        `<option value="${escapeHtml(acc.id)}">${escapeHtml(acc.email)}</option>`
-      ).join('');
+  function openLogsAccountMenu() {
+    const trigger = document.getElementById('logs-account-trigger');
+    const menu = document.getElementById('logs-account-menu');
+    if (!trigger || !menu) return;
+    trigger.setAttribute('aria-expanded', 'true');
+    trigger.classList.add('open');
+    menu.hidden = false;
+  }
 
-    if (current && state.accounts.find(a => a.id === current)) {
-      filter.value = current;
+  function dismissLogsAccountMenu() {
+    const trigger = document.getElementById('logs-account-trigger');
+    const menu = document.getElementById('logs-account-menu');
+    if (!trigger || !menu) return;
+    trigger.setAttribute('aria-expanded', 'false');
+    trigger.classList.remove('open');
+    menu.hidden = true;
+  }
+
+  // Update account filters
+  function updateAccountFilters() {
+    const menu = document.getElementById('logs-account-menu');
+    if (!menu) return;
+
+    const available = new Set(state.accounts.map(acc => acc.email || acc.id || '').filter(Boolean));
+    const selected = getLogsSelectedAccounts().filter(value => available.has(value));
+    setLogsSelectedAccounts(selected);
+
+    const options = state.accounts.map(acc => {
+      const value = acc.email || acc.id || '';
+      const label = acc.email || acc.id || '--';
+      const checked = selected.includes(value) ? ' checked' : '';
+      return `<label class="logs-account-option"><input type="checkbox" value="${escapeHtml(value)}"${checked}> <span>${escapeHtml(label)}</span></label>`;
+    }).join('');
+
+    menu.innerHTML = options || '<div class="logs-account-empty">No accounts</div>';
+    updateLogsAccountSummary(selected);
+  }
+
+  function updateLogsAccountSummary(selected) {
+    const summary = document.getElementById('logs-account-summary');
+    if (!summary) return;
+    if (!Array.isArray(selected) || selected.length === 0) {
+      summary.textContent = 'All Accounts';
+      return;
     }
+    if (selected.length === 1) {
+      summary.textContent = selected[0];
+      return;
+    }
+    summary.textContent = `${selected[0]} +${selected.length - 1}`;
   }
 
   function restoreCachedLogs() {
@@ -1739,6 +1824,7 @@
     const activityLogs = normalizeActivityEntries(activityData);
     if (activityLogs.length > 0) {
       state.logs = mergeLogsWithCache(activityLogs);
+      state.logVisibleCount = LOGS_PAGE_SIZE;
       persistLogs(state.logs);
       filterLogs();
       return;
@@ -1755,6 +1841,7 @@
     }
 
     state.logs = mergeLogsWithCache(lineLogs);
+    state.logVisibleCount = LOGS_PAGE_SIZE;
     persistLogs(state.logs);
     filterLogs();
   }
@@ -1910,7 +1997,7 @@
     if (!tbody) return;
     tbody.innerHTML = `
       <tr>
-        <td colspan="8" style="text-align: center; padding: 40px; color: var(--text-muted);">
+        <td colspan="7" style="text-align: center; padding: 40px; color: var(--text-muted);">
           No log entries yet. Make some API requests to see them here.
         </td>
       </tr>
@@ -1969,6 +2056,7 @@
     if (!logs || logs.length === 0) {
       renderEmptyLogs();
       renderLogsFooter([]);
+      updateLogsResults(0, 0);
       return;
     }
 
@@ -1976,18 +2064,43 @@
 
     tbody.innerHTML = visibleLogs.map(log => `
       <tr>
-        <td><span class="log-id">${escapeHtml(log.id)}</span></td>
-        <td>${escapeHtml(log.account)}</td>
-        <td class="log-model">${escapeHtml(log.model)}</td>
-        <td class="log-transport">${escapeHtml(log.transport || '--')}</td>
-        <td>${escapeHtml(log.latency)}</td>
-        <td><span class="log-status ${escapeHtml(log.status)}"><span class="log-status-dot"></span>${capitalize(log.status)}</span></td>
-        <td>${escapeHtml(log.time)}</td>
-        <td title="${escapeHtml(log.message)}">${escapeHtml(log.message.substring(0, 50))}${log.message.length > 50 ? '...' : ''}</td>
+        <td class="log-status-cell ${escapeHtml(log.status)}-row"><span class="log-status ${escapeHtml(log.status)}"><span class="log-status-dot"></span>${capitalize(log.status)}</span></td>
+        <td>
+          <div class="request-title">${escapeHtml(buildLogRequestTitle(log))}</div>
+          <div class="request-message" title="${escapeHtml(log.message)}">${escapeHtml(log.message)}</div>
+        </td>
+        <td><div class="account-name">${escapeHtml(log.account)}</div></td>
+        <td><div class="model-name">${escapeHtml(log.model)}</div></td>
+        <td><div class="transport-name">${escapeHtml(log.transport || '--')}</div></td>
+        <td><div class="time-value">${escapeHtml(log.time)}</div></td>
+        <td><div class="latency-value${isSlowLatency(log.latency) ? ' slow' : ''}">${escapeHtml(log.latency)}</div></td>
       </tr>
     `).join('');
 
+    updateLogsResults(visibleLogs.length, logs.length);
     renderLogsFooter(logs);
+  }
+
+  function buildLogRequestTitle(log) {
+    const message = String(log && log.message || '').trim();
+    const firstSentence = message.split(/[\n.]/)[0].trim();
+    if (firstSentence) return firstSentence;
+    return log && log.model ? log.model : 'Request';
+  }
+
+  function isSlowLatency(latency) {
+    const match = String(latency || '').match(/(\d+)/);
+    return match ? Number(match[1]) >= 1000 : false;
+  }
+
+  function updateLogsResults(visible, total) {
+    const result = document.getElementById('logs-results');
+    if (!result) return;
+    if (!total) {
+      result.textContent = '0 events';
+      return;
+    }
+    result.textContent = `${visible} of ${total} events`;
   }
 
   // Filter logs
@@ -1995,6 +2108,11 @@
     const search = document.getElementById('logs-search').value.toLowerCase();
     const accountFilter = document.getElementById('logs-account-filter').value;
     const statusFilter = document.getElementById('logs-status-filter').value;
+    const filterSignature = JSON.stringify([search, accountFilter, statusFilter]);
+    if (lastLogsFilterSignature && lastLogsFilterSignature !== filterSignature) {
+      state.logVisibleCount = LOGS_PAGE_SIZE;
+    }
+    lastLogsFilterSignature = filterSignature;
 
     let filtered = state.logs;
 
@@ -2003,12 +2121,16 @@
         log.id.toLowerCase().includes(search) ||
         log.model.toLowerCase().includes(search) ||
         log.account.toLowerCase().includes(search) ||
-        (log.transport || '').toLowerCase().includes(search)
+        (log.transport || '').toLowerCase().includes(search) ||
+        (log.message || '').toLowerCase().includes(search)
       );
     }
 
-    if (accountFilter && accountFilter !== 'All Accounts') {
-      filtered = filtered.filter(log => log.account === accountFilter);
+    if (accountFilter) {
+      const selectedAccounts = new Set(accountFilter.split(',').map(value => value.trim()).filter(Boolean));
+      if (selectedAccounts.size > 0) {
+        filtered = filtered.filter(log => selectedAccounts.has(log.account));
+      }
     }
 
     if (statusFilter && statusFilter !== 'All Status') {
@@ -2186,10 +2308,16 @@
 
   function setLogVisibleCount(value) {
     state.logVisibleCount = value;
+    lastLogsFilterSignature = '';
   }
 
   function setLogsForTest(logs) {
     state.logs = logs;
+    lastLogsFilterSignature = '';
+  }
+
+  function setAccountsForTest(accounts) {
+    state.accounts = accounts;
   }
 
   if (typeof module !== 'undefined' && module.exports) {
@@ -2200,8 +2328,12 @@
       shouldShowOlderLogsControl,
       renderLogs,
       filterLogs,
+      updateAccountFilters,
+      openLogsAccountMenu,
+      dismissLogsAccountMenu,
       setLogVisibleCount,
       setLogsForTest,
+      setAccountsForTest,
       handleRefresh,
       computeQuotaSummaryFromQuotas,
       resolveAccountUsage,
