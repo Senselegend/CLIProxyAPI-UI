@@ -293,6 +293,32 @@ test('deriveAccountStatus keeps rate-limited mapping for cooldown auths', () => 
   assert.deepEqual(status, { key: 'rate_limited', label: 'rate limited' });
 });
 
+test('deriveAccountStatus softens in-flight recovery to syncing', () => {
+  const status = deriveAccountStatus(
+    {
+      status: 'error',
+      recovery: { in_flight: true },
+      status_message: 'context canceled',
+    },
+    null,
+  );
+  assert.deepEqual(status, { key: 'syncing', label: 'syncing' });
+});
+
+test('deriveAccountStatus softens transient unavailable recovery to syncing', () => {
+  const status = deriveAccountStatus(
+    {
+      status: 'error',
+      unavailable: true,
+      next_retry_after: new Date(Date.now() + 60_000).toISOString(),
+      status_message: 'upstream unavailable',
+      recovery: { last_run_at: new Date(Date.now() - 30_000).toISOString() },
+    },
+    null,
+  );
+  assert.deepEqual(status, { key: 'syncing', label: 'syncing' });
+});
+
 test('normalizeActivityEntries hides request activity entries without accounts', () => {
   const rows = normalizeActivityEntries({
     entries: [
@@ -475,6 +501,66 @@ test('buildDashboardUsage prefers summary payload from account usage response', 
   assert.equal(usage.summary.last_7_days.errors, 5);
 });
 
+test('buildDashboardUsage keeps last known good summary when new snapshot is zeroed', () => {
+  const usage = buildDashboardUsage(
+    {
+      usage: {
+        total_requests: 0,
+        total_tokens: 0,
+        failure_count: 0,
+        summary: {
+          lifetime: { requests: 0, tokens: 0, cost_usd: 0, errors: 0 },
+          today: { requests: 0, tokens: 0, cost_usd: 0, errors: 0 },
+          last_7_days: { requests: 0, tokens: 0, cost_usd: 0, errors: 0 },
+          last_30_days: { requests: 0, tokens: 0, cost_usd: 0, errors: 0 },
+        },
+      },
+    },
+    { by_account: {} },
+    {
+      summary: {
+        lifetime: { requests: 99, tokens: 12345, cost_usd: 1.23, errors: 4 },
+        today: { requests: 5, tokens: 500, cost_usd: 0.05, errors: 1 },
+        last_7_days: { requests: 20, tokens: 2000, cost_usd: 0.2, errors: 2 },
+        last_30_days: { requests: 70, tokens: 7000, cost_usd: 0.7, errors: 3 },
+      },
+    },
+  );
+
+  assert.equal(usage.summary.lifetime.requests, 99);
+  assert.equal(usage.summary.last_7_days.tokens, 2000);
+});
+
+test('buildDashboardUsage keeps fresh summary when new snapshot has meaningful values', () => {
+  const usage = buildDashboardUsage(
+    {
+      usage: {
+        total_requests: 0,
+        total_tokens: 0,
+        failure_count: 0,
+        summary: {
+          lifetime: { requests: 10, tokens: 200, cost_usd: 0.02, errors: 1 },
+          today: { requests: 2, tokens: 20, cost_usd: 0.002, errors: 0 },
+          last_7_days: { requests: 7, tokens: 70, cost_usd: 0.007, errors: 1 },
+          last_30_days: { requests: 9, tokens: 90, cost_usd: 0.009, errors: 1 },
+        },
+      },
+    },
+    { by_account: {} },
+    {
+      summary: {
+        lifetime: { requests: 99, tokens: 12345, cost_usd: 1.23, errors: 4 },
+        today: { requests: 5, tokens: 500, cost_usd: 0.05, errors: 1 },
+        last_7_days: { requests: 20, tokens: 2000, cost_usd: 0.2, errors: 2 },
+        last_30_days: { requests: 70, tokens: 7000, cost_usd: 0.7, errors: 3 },
+      },
+    },
+  );
+
+  assert.equal(usage.summary.lifetime.requests, 10);
+  assert.equal(usage.summary.today.tokens, 20);
+});
+
 test('getInitialSummaryWindow defaults to last_7_days and restores valid saved value', () => {
   assert.equal(getInitialSummaryWindow({ getItem: () => null }), 'last_7_days');
   assert.equal(getInitialSummaryWindow({ getItem: () => 'last_30_days' }), 'last_30_days');
@@ -588,23 +674,36 @@ test('updateQuotaRings uses rolling token windows for 5h and 7d displays', () =>
   }
 });
 
-test('handleRefresh reloads data, triggers account recheck, and reloads accounts again', async () => {
+test('handleRefresh reloads data, triggers account recheck, and polls accounts until recovery settles', async () => {
   const calls = [];
   const originalSetTimeout = global.setTimeout;
+  let authFilesCallCount = 0;
   global.document = createDocumentStub();
   global.setTimeout = (fn) => {
     fn();
     return 0;
   };
   global.fetch = async (url, options = {}) => {
-    calls.push({ url: String(url), method: options.method || 'GET' });
-    if (String(url).includes('/usage')) return { ok: true, json: async () => ({ usage: {} }) };
-    if (String(url).includes('/account-usage')) return { ok: true, json: async () => ({ by_account: {} }) };
-    if (String(url).includes('/auth-files') && !String(url).includes('/recheck')) return { ok: true, json: async () => ({ files: [] }) };
-    if (String(url).includes('/quotas')) return { ok: true, json: async () => ({ quotas: [] }) };
-    if (String(url).includes('/logs')) return { ok: true, json: async () => ({ logs: [] }) };
-    if (String(url).includes('/request-activity')) return { ok: true, json: async () => ({ entries: [] }) };
-    if (String(url).includes('/auth-files/recheck')) return { ok: true, json: async () => ({ triggered: 2 }) };
+    const currentUrl = String(url);
+    calls.push({ url: currentUrl, method: options.method || 'GET' });
+    if (currentUrl.includes('/usage')) return { ok: true, json: async () => ({ usage: {} }) };
+    if (currentUrl.includes('/account-usage')) return { ok: true, json: async () => ({ by_account: {} }) };
+    if (currentUrl.includes('/auth-files') && !currentUrl.includes('/recheck')) {
+      authFilesCallCount += 1;
+      if (authFilesCallCount === 1) {
+        return { ok: true, json: async () => ({ files: [] }) };
+      }
+      if (authFilesCallCount === 2) {
+        return { ok: true, json: async () => ({ files: [{ name: 'alpha.json', status: 'error', recovery: { in_flight: true } }] }) };
+      }
+      return { ok: true, json: async () => ({ files: [{ name: 'alpha.json', status: 'active', recovery: { in_flight: false } }] }) };
+    }
+    if (currentUrl.includes('/quotas')) return { ok: true, json: async () => ({ quotas: [] }) };
+    if (currentUrl.includes('/logs')) return { ok: true, json: async () => ({ logs: [] }) };
+    if (currentUrl.includes('/request-activity')) return { ok: true, json: async () => ({ entries: [] }) };
+    if (currentUrl.includes('/auth-files/recheck')) {
+      return { ok: true, json: async () => ({ triggered: 1, recovery: { in_flight_count: 1 } }) };
+    }
     throw new Error(`unexpected url ${url}`);
   };
 
@@ -613,10 +712,10 @@ test('handleRefresh reloads data, triggers account recheck, and reloads accounts
     const authFileCalls = calls.filter(call => call.url.includes('/auth-files') && !call.url.includes('/recheck'));
     const recheckIndex = calls.findIndex(call => call.url.includes('/auth-files/recheck') && call.method === 'POST');
 
-    assert.equal(authFileCalls.length >= 2, true);
+    assert.equal(authFileCalls.length >= 3, true);
     assert.equal(recheckIndex > -1, true);
     assert.equal(calls.findIndex(call => call.url.includes('/auth-files') && !call.url.includes('/recheck')) < recheckIndex, true);
-    assert.equal(calls.slice(recheckIndex + 1).some(call => call.url.includes('/auth-files') && !call.url.includes('/recheck')), true);
+    assert.equal(calls.slice(recheckIndex + 1).filter(call => call.url.includes('/auth-files') && !call.url.includes('/recheck')).length >= 2, true);
   } finally {
     delete global.fetch;
     delete global.document;
@@ -644,6 +743,44 @@ test('handleRefresh still resolves when account recheck fails', async () => {
 
   try {
     await assert.doesNotReject(handleRefresh());
+  } finally {
+    delete global.fetch;
+    delete global.document;
+    global.setTimeout = originalSetTimeout;
+  }
+});
+
+test('handleRefresh stops polling after bounded attempts when accounts stay syncing', async () => {
+  const originalSetTimeout = global.setTimeout;
+  let authFilesCallCount = 0;
+  global.document = createDocumentStub();
+  global.setTimeout = (fn) => {
+    fn();
+    return 0;
+  };
+  global.fetch = async (url, options = {}) => {
+    const currentUrl = String(url);
+    if (currentUrl.includes('/usage')) return { ok: true, json: async () => ({ usage: {} }) };
+    if (currentUrl.includes('/account-usage')) return { ok: true, json: async () => ({ by_account: {} }) };
+    if (currentUrl.includes('/auth-files') && !currentUrl.includes('/recheck')) {
+      authFilesCallCount += 1;
+      if (authFilesCallCount === 1) {
+        return { ok: true, json: async () => ({ files: [] }) };
+      }
+      return { ok: true, json: async () => ({ files: [{ name: 'alpha.json', status: 'error', recovery: { in_flight: true } }] }) };
+    }
+    if (currentUrl.includes('/quotas')) return { ok: true, json: async () => ({ quotas: [] }) };
+    if (currentUrl.includes('/logs')) return { ok: true, json: async () => ({ logs: [] }) };
+    if (currentUrl.includes('/request-activity')) return { ok: true, json: async () => ({ entries: [] }) };
+    if (currentUrl.includes('/auth-files/recheck')) {
+      return { ok: true, json: async () => ({ triggered: 1, recovery: { in_flight_count: 1 } }) };
+    }
+    throw new Error(`unexpected url ${url}`);
+  };
+
+  try {
+    await handleRefresh();
+    assert.equal(authFilesCallCount, 6);
   } finally {
     delete global.fetch;
     delete global.document;

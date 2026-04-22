@@ -7,6 +7,8 @@
   const LOGS_CACHE_LIMIT = 200;
   const LOGS_PAGE_SIZE = 50;
   const SUMMARY_WINDOW_KEY = 'dashboard-summary-window';
+  const RECOVERY_POLL_ATTEMPTS = 4;
+  const RECOVERY_POLL_DELAY_MS = 1500;
   const DEFAULT_SUMMARY_WINDOW = 'last_7_days';
   const SUMMARY_WINDOWS = new Set(['today', 'last_7_days', 'last_30_days']);
 
@@ -481,6 +483,32 @@
     return await apiFetch('/auth-files/recheck', { method: 'POST' });
   }
 
+  function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function hasRecoveringAccounts(accounts) {
+    return Array.isArray(accounts) && accounts.some((account) => account && account.status === 'syncing');
+  }
+
+  async function runRecoveryPolling(recheck) {
+    const triggered = Number(recheck && recheck.triggered) || 0;
+    const inFlightCount = Number(recheck && recheck.recovery && recheck.recovery.in_flight_count) || 0;
+    if (triggered <= 0 && inFlightCount <= 0) {
+      return;
+    }
+
+    for (let attempt = 0; attempt < RECOVERY_POLL_ATTEMPTS; attempt += 1) {
+      await loadAccounts();
+      if (!hasRecoveringAccounts(state.accounts)) {
+        return;
+      }
+      if (attempt < RECOVERY_POLL_ATTEMPTS - 1) {
+        await delay(RECOVERY_POLL_DELAY_MS);
+      }
+    }
+  }
+
   async function handleRefresh() {
     if (refreshInFlight) {
       return;
@@ -500,6 +528,7 @@
       if (recheck && recheck.triggered > 0) {
         showToast(`Rechecking ${recheck.triggered} accounts`, 'info');
       }
+      await runRecoveryPolling(recheck);
       await loadAccounts();
     } finally {
       refreshInFlight = false;
@@ -512,10 +541,24 @@
     }
   }
 
-  function buildDashboardUsage(data, accountData) {
+  function hasMeaningfulSummary(summary) {
+    if (!summary) return false;
+    const normalized = normalizeSummaryPayload(summary);
+    return Object.values(normalized).some(windowValue => (
+      Number(windowValue.requests) > 0
+      || Number(windowValue.tokens) > 0
+      || Number(windowValue.cost_usd) > 0
+      || Number(windowValue.errors) > 0
+    ));
+  }
+
+  function buildDashboardUsage(data, accountData, previousUsage) {
     const usage = { ...(data && data.usage ? data.usage : {}) };
     const summarySource = accountData && accountData.summary ? accountData.summary : usage.summary;
-    usage.summary = normalizeSummaryPayload(summarySource);
+    const previousSummary = previousUsage && previousUsage.summary ? previousUsage.summary : null;
+    usage.summary = hasMeaningfulSummary(summarySource)
+      ? normalizeSummaryPayload(summarySource)
+      : normalizeSummaryPayload(previousSummary);
 
     if (accountData && accountData.by_account && Object.keys(accountData.by_account).length > 0) {
       const accountAPIs = {};
@@ -656,7 +699,7 @@
       return;
     }
 
-    state.usage = buildDashboardUsage(data, accountData);
+    state.usage = buildDashboardUsage(data, accountData, state.usage);
     state.summaryWindow = setSummaryWindow(state.summaryWindow, storage);
     renderSummaryCards(state.usage.summary, state.summaryWindow);
 
@@ -810,6 +853,28 @@
     return { key: 'syncing', label: 'syncing' };
   }
 
+  function getRecoveryAccountStatus(file) {
+    const recovery = file?.recovery || {};
+    if (recovery.in_flight) {
+      return { key: 'syncing', label: 'syncing' };
+    }
+
+    if (!file?.unavailable || !hasFutureRetry(file?.next_retry_after)) {
+      return null;
+    }
+
+    const statusMessage = String(file?.status_message || '').trim().toLowerCase();
+    if (statusMessage.includes('quota') || statusMessage.includes('rate')) {
+      return { key: 'rate_limited', label: 'rate limited' };
+    }
+
+    if (recovery.last_run_at) {
+      return { key: 'syncing', label: 'syncing' };
+    }
+
+    return { key: 'error', label: 'error' };
+  }
+
   function deriveAccountStatus(file, quota) {
     const backendStatus = String(file?.status || '').trim().toLowerCase();
     const statusMessage = String(file?.status_message || '').trim().toLowerCase();
@@ -826,11 +891,9 @@
       return startupSyncStatus;
     }
 
-    if (file?.unavailable && hasFutureRetry(file?.next_retry_after)) {
-      if (statusMessage.includes('quota') || statusMessage.includes('rate')) {
-        return { key: 'rate_limited', label: 'rate limited' };
-      }
-      return { key: 'error', label: 'error' };
+    const recoveryStatus = getRecoveryAccountStatus(file);
+    if (recoveryStatus) {
+      return recoveryStatus;
     }
 
     if (hasQuotaCooldown(quota?.primary_window) || hasQuotaCooldown(quota?.secondary_window)) {

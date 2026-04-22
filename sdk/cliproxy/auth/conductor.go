@@ -245,6 +245,12 @@ type AuthRecheckSummary struct {
 	SkippedNotEligible int `json:"skipped_not_eligible"`
 }
 
+type RecheckSnapshot struct {
+	InFlightCount int                  `json:"in_flight_count"`
+	InFlight      map[string]bool      `json:"in_flight"`
+	LastRunAt     map[string]time.Time `json:"last_run_at"`
+}
+
 type authRecheckScheduleOutcome int
 
 const (
@@ -352,6 +358,28 @@ func (m *Manager) TriggerEligibleAuthRechecks(ctx context.Context) AuthRecheckSu
 		}
 	}
 	return summary
+}
+
+func (m *Manager) AuthRecheckSnapshot() RecheckSnapshot {
+	snapshot := RecheckSnapshot{
+		InFlight:  make(map[string]bool),
+		LastRunAt: make(map[string]time.Time),
+	}
+	if m == nil {
+		return snapshot
+	}
+
+	m.recheckMu.RLock()
+	defer m.recheckMu.RUnlock()
+
+	snapshot.InFlightCount = len(m.recheckInFlight)
+	for authID := range m.recheckInFlight {
+		snapshot.InFlight[authID] = true
+	}
+	for authID, lastRunAt := range m.recheckLastRunAt {
+		snapshot.LastRunAt[authID] = lastRunAt
+	}
+	return snapshot
 }
 
 func (m *Manager) runAuthRecheck(ctx context.Context, authID string) {
