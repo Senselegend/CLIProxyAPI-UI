@@ -496,6 +496,12 @@
           total_requests: totalRequests,
           total_tokens: totalTokens,
           failure_count: failureCount,
+          last_5_hours: {
+            total_tokens: Number(acc.last_5_hours && acc.last_5_hours.total_tokens) || 0,
+          },
+          last_7_days: {
+            total_tokens: Number(acc.last_7_days && acc.last_7_days.total_tokens) || 0,
+          },
           models: Object.fromEntries(
             Object.entries(acc.models || {}).map(([m, cnt]) => [m, { total_requests: Number(cnt) || 0, total_tokens: 0 }])
           )
@@ -570,29 +576,29 @@
     const sevendPercent = syncing ? null : (quotaSummary ? Math.round(quotaSummary.secondary_used_percent) : 0);
 
     const apiKeys = apis && Object.keys(apis);
-    const totalRequests = apiKeys ? apiKeys.reduce((sum, key) => sum + (apis[key].total_requests || 0), 0) : 0;
-    const totalTokens = apiKeys ? apiKeys.reduce((sum, key) => sum + (apis[key].total_tokens || 0), 0) : 0;
+    const total5hTokens = apiKeys ? apiKeys.reduce((sum, key) => sum + ((((apis[key].last_5_hours) || {}).total_tokens) || 0), 0) : 0;
+    const total7dTokens = apiKeys ? apiKeys.reduce((sum, key) => sum + ((((apis[key].last_7_days) || {}).total_tokens) || 0), 0) : 0;
 
     document.getElementById('quota-5h-percent').textContent = fivehPercent == null ? 'syncing' : (fivehPercent + '%');
-    document.getElementById('quota-5h-remaining').textContent = syncing ? 'warming up' : (formatNumber(totalRequests) + ' reqs');
+    document.getElementById('quota-5h-remaining').textContent = syncing ? 'warming up' : (formatTokens(total5hTokens) + ' tokens');
 
     animateRing(document.getElementById('quota-5h-ring'), fivehPercent == null ? 0 : fivehPercent);
 
     document.getElementById('quota-7d-percent').textContent = sevendPercent == null ? 'syncing' : (sevendPercent + '%');
-    document.getElementById('quota-7d-remaining').textContent = syncing ? 'warming up' : (formatNumber(totalTokens) + ' tokens');
+    document.getElementById('quota-7d-remaining').textContent = syncing ? 'warming up' : (formatTokens(total7dTokens) + ' tokens');
 
     animateRing(document.getElementById('quota-7d-ring'), sevendPercent == null ? 0 : sevendPercent);
 
     if (apiKeys && apiKeys.length > 0) {
       renderQuotaLegend('quota-5h-legend', apiKeys.map((key, i) => ({
         email: key,
-        used: apis[key].total_requests || 0,
+        used: (((apis[key].last_5_hours) || {}).total_tokens) || 0,
         color: accountColors[i % accountColors.length]
       })));
 
       renderQuotaLegend('quota-7d-legend', apiKeys.map((key, i) => ({
         email: key,
-        used: apis[key].total_tokens || 0,
+        used: (((apis[key].last_7_days) || {}).total_tokens) || 0,
         color: accountColors[i % accountColors.length]
       })));
     } else {
@@ -626,7 +632,7 @@
       <div class="quota-legend-row">
         <div class="quota-legend-swatch" style="background: ${item.color}"></div>
         <span class="quota-legend-email">${escapeHtml(item.email)}</span>
-        <span class="quota-legend-value">${formatNumber(item.used)}</span>
+        <span class="quota-legend-value">${formatTokens(item.used)}</span>
       </div>
     `).join('');
   }
@@ -2024,6 +2030,8 @@
       handleRefresh,
       computeQuotaSummaryFromQuotas,
       resolveAccountUsage,
+      buildDashboardUsage,
+      updateQuotaRings,
     };
   }
 

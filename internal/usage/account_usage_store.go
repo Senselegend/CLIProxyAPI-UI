@@ -243,30 +243,68 @@ type RequestUsageStats struct {
 	ByAPIKey  map[string]APISnapshot      `json:"by_api_key"`
 }
 
+type AccountUsageWindowData struct {
+	TotalTokens int64 `json:"total_tokens"`
+}
+
 type AccountUsageData struct {
-	TotalRequests int64            `json:"total_requests"`
-	TotalTokens   int64            `json:"total_tokens"`
-	FailedCount   int64            `json:"failed_count"`
-	Models        map[string]int64 `json:"models"`
+	TotalRequests int64                 `json:"total_requests"`
+	TotalTokens   int64                 `json:"total_tokens"`
+	FailedCount   int64                 `json:"failed_count"`
+	Models        map[string]int64      `json:"models"`
+	Last5Hours    AccountUsageWindowData `json:"last_5_hours"`
+	Last7Days     AccountUsageWindowData `json:"last_7_days"`
+}
+
+func GetRequestUsageStatsAt(snapshot StatisticsSnapshot, now time.Time) RequestUsageStats {
+	result := RequestUsageStats{
+		ByAccount: make(map[string]AccountUsageData),
+		ByAPIKey:  snapshot.APIs,
+	}
+
+	fiveHourCutoff := now.Add(-5 * time.Hour)
+	sevenDayCutoff := now.Add(-7 * 24 * time.Hour)
+
+	for _, apiSnapshot := range snapshot.APIs {
+		for _, modelSnapshot := range apiSnapshot.Models {
+			for _, detail := range modelSnapshot.Details {
+				accountKey := strings.TrimSpace(detail.Account)
+				if accountKey == "" {
+					accountKey = strings.TrimSpace(detail.Source)
+				}
+				if accountKey == "" {
+					continue
+				}
+				entry := result.ByAccount[accountKey]
+				if !detail.Timestamp.IsZero() {
+					if !detail.Timestamp.Before(fiveHourCutoff) {
+						entry.Last5Hours.TotalTokens += detail.Tokens.TotalTokens
+					}
+					if !detail.Timestamp.Before(sevenDayCutoff) {
+						entry.Last7Days.TotalTokens += detail.Tokens.TotalTokens
+					}
+				}
+				result.ByAccount[accountKey] = entry
+			}
+		}
+	}
+
+	return result
 }
 
 // GetRequestUsageStats returns combined usage data for the dashboard.
 func GetRequestUsageStats() RequestUsageStats {
 	accountStore := GetAccountUsageStore()
 	apiStats := GetRequestStatistics().Snapshot()
-
-	result := RequestUsageStats{
-		ByAccount: make(map[string]AccountUsageData),
-		ByAPIKey:  apiStats.APIs,
-	}
+	result := GetRequestUsageStatsAt(apiStats, time.Now())
 
 	for email, acc := range accountStore.Snapshot() {
-		result.ByAccount[email] = AccountUsageData{
-			TotalRequests: acc.TotalRequests,
-			TotalTokens:   acc.TotalTokens,
-			FailedCount:   acc.FailedCount,
-			Models:        acc.Models,
-		}
+		entry := result.ByAccount[email]
+		entry.TotalRequests = acc.TotalRequests
+		entry.TotalTokens = acc.TotalTokens
+		entry.FailedCount = acc.FailedCount
+		entry.Models = acc.Models
+		result.ByAccount[email] = entry
 	}
 
 	return result
