@@ -245,9 +245,11 @@ func (h *Handler) ListAuthFiles(c *gin.Context) {
 		return
 	}
 	auths := h.authManager.List()
+	recoverySnapshot := authRecheckSnapshotGetter(h.authManager)
 	files := make([]gin.H, 0, len(auths))
 	for _, auth := range auths {
 		if entry := h.buildAuthFileEntry(auth); entry != nil {
+			entry["recovery"] = buildRecoveryMetadata(recoverySnapshot, auth.ID)
 			files = append(files, entry)
 		}
 	}
@@ -324,7 +326,7 @@ func (h *Handler) listAuthFilesFromDisk(c *gin.Context) {
 			continue
 		}
 		if info, errInfo := e.Info(); errInfo == nil {
-			fileData := gin.H{"name": name, "size": info.Size(), "modtime": info.ModTime()}
+			fileData := gin.H{"name": name, "size": info.Size(), "modtime": info.ModTime(), "recovery": buildRecoveryMetadata(coreauth.RecheckSnapshot{}, name)}
 
 			// Read file to get type field
 			full := filepath.Join(h.cfg.AuthDir, name)
@@ -530,6 +532,20 @@ func authAttribute(auth *coreauth.Auth, key string) string {
 		return ""
 	}
 	return auth.Attributes[key]
+}
+
+func buildRecoveryMetadata(snapshot coreauth.RecheckSnapshot, authID string) gin.H {
+	recovery := gin.H{"in_flight": false}
+	if strings.TrimSpace(authID) == "" {
+		return recovery
+	}
+	if snapshot.InFlight[authID] {
+		recovery["in_flight"] = true
+	}
+	if ts, ok := snapshot.LastRunAt[authID]; ok && !ts.IsZero() {
+		recovery["last_run_at"] = ts
+	}
+	return recovery
 }
 
 func isRuntimeOnlyAuth(auth *coreauth.Auth) bool {

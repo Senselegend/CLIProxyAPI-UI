@@ -252,6 +252,121 @@ func TestMaybeScheduleAuthRecheck_ClearsInFlightAfterRunnerReturns(t *testing.T)
 	}
 }
 
+func TestManager_AuthRecheckSnapshot_TracksLifecycle(t *testing.T) {
+	m := NewManager(nil, nil, nil)
+	m.recheckCooldown = 0
+
+	release := make(chan struct{})
+	started := make(chan struct{}, 1)
+	m.recheckRunner = func(context.Context, string) {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+	}
+
+	empty := m.AuthRecheckSnapshot()
+	if empty.InFlightCount != 0 {
+		t.Fatalf("initial InFlightCount = %d, want 0", empty.InFlightCount)
+	}
+	if len(empty.InFlight) != 0 {
+		t.Fatalf("initial InFlight = %#v, want empty", empty.InFlight)
+	}
+	if len(empty.LastRunAt) != 0 {
+		t.Fatalf("initial LastRunAt = %#v, want empty", empty.LastRunAt)
+	}
+
+	before := time.Now()
+	m.maybeScheduleAuthRecheck(context.Background(), &Auth{ID: "auth-1", Status: StatusError})
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatalf("expected recheck runner to start")
+	}
+
+	during := m.AuthRecheckSnapshot()
+	if during.InFlightCount != 1 {
+		t.Fatalf("during InFlightCount = %d, want 1", during.InFlightCount)
+	}
+	if !during.InFlight["auth-1"] {
+		t.Fatalf("during InFlight[auth-1] = %v, want true", during.InFlight["auth-1"])
+	}
+	lastRunAt, ok := during.LastRunAt["auth-1"]
+	if !ok {
+		t.Fatalf("during LastRunAt missing auth-1")
+	}
+	if lastRunAt.Before(before) {
+		t.Fatalf("during LastRunAt[auth-1] = %v, want at or after %v", lastRunAt, before)
+	}
+
+	close(release)
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		after := m.AuthRecheckSnapshot()
+		if after.InFlightCount == 0 {
+			if len(after.InFlight) != 0 {
+				t.Fatalf("after InFlight = %#v, want empty", after.InFlight)
+			}
+			if _, ok := after.LastRunAt["auth-1"]; !ok {
+				t.Fatalf("after LastRunAt missing auth-1")
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected in-flight recheck to clear from snapshot")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestManager_AuthRecheckSnapshot_ClonesState(t *testing.T) {
+	var nilManager *Manager
+	nilSnapshot := nilManager.AuthRecheckSnapshot()
+	if nilSnapshot.InFlight == nil {
+		t.Fatalf("nil manager InFlight = nil, want initialized map")
+	}
+	if nilSnapshot.LastRunAt == nil {
+		t.Fatalf("nil manager LastRunAt = nil, want initialized map")
+	}
+	if nilSnapshot.InFlightCount != 0 {
+		t.Fatalf("nil manager InFlightCount = %d, want 0", nilSnapshot.InFlightCount)
+	}
+
+	m := NewManager(nil, nil, nil)
+	wantTime := time.Now().Round(0)
+
+	m.recheckMu.Lock()
+	m.recheckInFlight["auth-1"] = struct{}{}
+	m.recheckLastRunAt["auth-1"] = wantTime
+	m.recheckMu.Unlock()
+
+	snapshot := m.AuthRecheckSnapshot()
+	snapshot.InFlight["auth-1"] = false
+	delete(snapshot.LastRunAt, "auth-1")
+	snapshot.InFlight["auth-2"] = true
+	snapshot.LastRunAt["auth-2"] = wantTime.Add(time.Second)
+
+	again := m.AuthRecheckSnapshot()
+	if again.InFlightCount != 1 {
+		t.Fatalf("InFlightCount = %d, want 1", again.InFlightCount)
+	}
+	if !again.InFlight["auth-1"] {
+		t.Fatalf("InFlight[auth-1] = %v, want true", again.InFlight["auth-1"])
+	}
+	if _, ok := again.InFlight["auth-2"]; ok {
+		t.Fatalf("InFlight unexpectedly contains auth-2")
+	}
+	if got, ok := again.LastRunAt["auth-1"]; !ok || !got.Equal(wantTime) {
+		t.Fatalf("LastRunAt[auth-1] = %v, want %v", got, wantTime)
+	}
+	if _, ok := again.LastRunAt["auth-2"]; ok {
+		t.Fatalf("LastRunAt unexpectedly contains auth-2")
+	}
+}
+
 func TestMarkResult_AuthErrorSchedulesBackgroundRecheck(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 	m.recheckCooldown = 0
