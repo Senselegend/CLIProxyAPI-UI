@@ -369,8 +369,8 @@ func (m *Manager) AuthRecheckSnapshot() RecheckSnapshot {
 		return snapshot
 	}
 
-	m.recheckMu.RLock()
-	defer m.recheckMu.RUnlock()
+	m.recheckMu.Lock()
+	defer m.recheckMu.Unlock()
 
 	snapshot.InFlightCount = len(m.recheckInFlight)
 	for authID := range m.recheckInFlight {
