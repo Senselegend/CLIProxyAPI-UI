@@ -6,6 +6,9 @@
   const LOGS_CACHE_KEY = 'dashboard-request-activity-cache';
   const LOGS_CACHE_LIMIT = 200;
   const LOGS_PAGE_SIZE = 50;
+  const SUMMARY_WINDOW_KEY = 'dashboard-summary-window';
+  const DEFAULT_SUMMARY_WINDOW = 'last_7_days';
+  const SUMMARY_WINDOWS = new Set(['today', 'last_7_days', 'last_30_days']);
 
   const storage = typeof localStorage !== 'undefined' && localStorage && typeof localStorage.getItem === 'function'
     ? localStorage
@@ -20,6 +23,7 @@
     theme: storage.getItem('dashboard-theme') || 'dark',
     apiKey: storage.getItem('dashboard-api-key') || '',
     activeTab: 'dashboard',
+    summaryWindow: getInitialSummaryWindow(storage),
     accounts: [],
     usage: null,
     logs: [],
@@ -30,6 +34,7 @@
   };
   let detailCountdownTimer = null;
   let startupSyncPollTimer = null;
+  let refreshInFlight = false;
 
   // Icons
   const icons = {
@@ -76,6 +81,7 @@
   function init() {
     applyTheme(state.theme);
     setupEventListeners();
+    state.summaryWindow = setSummaryWindow(state.summaryWindow, storage);
     loadApiKey();
     showLoadingState();
     ensureDetailCountdownTimer();
@@ -261,6 +267,16 @@
     // Tab navigation
     document.querySelectorAll('.nav-btn[data-tab]').forEach(btn => {
       btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+    });
+
+    document.querySelectorAll('[data-summary-window]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (!SUMMARY_WINDOWS.has(btn.dataset.summaryWindow)) {
+          return;
+        }
+        state.summaryWindow = setSummaryWindow(btn.dataset.summaryWindow, storage);
+        renderSummaryCards(state.usage && state.usage.summary, state.summaryWindow);
+      });
     });
 
     // Refresh button
@@ -466,16 +482,39 @@
   }
 
   async function handleRefresh() {
-    await loadData();
-    const recheck = await triggerAccountRecheck().catch(() => null);
-    if (recheck && recheck.triggered > 0) {
-      showToast(`Rechecking ${recheck.triggered} accounts`, 'info');
+    if (refreshInFlight) {
+      return;
     }
-    await loadAccounts();
+
+    const refreshButton = document.getElementById('refresh-btn');
+    refreshInFlight = true;
+    if (refreshButton) {
+      refreshButton.disabled = true;
+      if (refreshButton.classList && typeof refreshButton.classList.add === 'function') {
+        refreshButton.classList.add('is-loading');
+      }
+    }
+    try {
+      await loadData();
+      const recheck = await triggerAccountRecheck().catch(() => null);
+      if (recheck && recheck.triggered > 0) {
+        showToast(`Rechecking ${recheck.triggered} accounts`, 'info');
+      }
+      await loadAccounts();
+    } finally {
+      refreshInFlight = false;
+      if (refreshButton) {
+        refreshButton.disabled = false;
+        if (refreshButton.classList && typeof refreshButton.classList.remove === 'function') {
+          refreshButton.classList.remove('is-loading');
+        }
+      }
+    }
   }
 
   function buildDashboardUsage(data, accountData) {
     const usage = { ...(data && data.usage ? data.usage : {}) };
+    usage.summary = normalizeSummaryPayload(usage.summary);
 
     if (accountData && accountData.by_account && Object.keys(accountData.by_account).length > 0) {
       const accountAPIs = {};
@@ -517,6 +556,94 @@
     return usage;
   }
 
+  function getInitialSummaryWindow(store) {
+    const savedValue = store && typeof store.getItem === 'function'
+      ? store.getItem(SUMMARY_WINDOW_KEY)
+      : null;
+    return SUMMARY_WINDOWS.has(savedValue) ? savedValue : DEFAULT_SUMMARY_WINDOW;
+  }
+
+  function summaryWindowLabel(summaryWindow) {
+    if (summaryWindow === 'today') return 'Today';
+    if (summaryWindow === 'last_30_days') return '30 days';
+    return '7 days';
+  }
+
+  function emptySummaryWindow() {
+    return { requests: 0, tokens: 0, cost_usd: 0, errors: 0 };
+  }
+
+  function normalizeSummaryWindow(windowValue) {
+    const source = windowValue || {};
+    return {
+      requests: Number(source.requests) || 0,
+      tokens: Number(source.tokens) || 0,
+      cost_usd: Number(source.cost_usd) || 0,
+      errors: Number(source.errors) || 0,
+    };
+  }
+
+  function normalizeSummaryPayload(summary) {
+    const source = summary || {};
+    return {
+      lifetime: normalizeSummaryWindow(source.lifetime),
+      today: normalizeSummaryWindow(source.today),
+      last_7_days: normalizeSummaryWindow(source.last_7_days),
+      last_30_days: normalizeSummaryWindow(source.last_30_days),
+    };
+  }
+
+  function getSummaryWindowValue(summary, summaryWindow) {
+    if (!summary || !SUMMARY_WINDOWS.has(summaryWindow) || !summary[summaryWindow]) {
+      return emptySummaryWindow();
+    }
+    return normalizeSummaryWindow(summary[summaryWindow]);
+  }
+
+  function comparisonText(value, type, summaryWindow) {
+    const label = summaryWindow === 'today' ? 'today' : `in ${summaryWindowLabel(summaryWindow).toLowerCase()}`;
+    if (type === 'cost') {
+      return `$${value.toFixed(2)} ${label}`;
+    }
+    if (type === 'tokens') {
+      return `${formatTokens(value)} ${label}`;
+    }
+    return `${formatNumber(value)} ${label}`;
+  }
+
+  function renderSummaryCards(summary, summaryWindow) {
+    const normalizedSummary = normalizeSummaryPayload(summary);
+    const lifetime = normalizedSummary.lifetime;
+    const comparison = getSummaryWindowValue(normalizedSummary, summaryWindow);
+
+    document.getElementById('metric-requests').textContent = formatNumber(lifetime.requests);
+    document.getElementById('metric-requests-window').textContent = comparisonText(comparison.requests, 'requests', summaryWindow);
+    document.getElementById('metric-requests-trend').textContent = lifetime.requests > 0 ? 'Lifetime total' : 'No requests yet';
+
+    document.getElementById('metric-tokens').textContent = formatTokens(lifetime.tokens);
+    document.getElementById('metric-tokens-window').textContent = comparisonText(comparison.tokens, 'tokens', summaryWindow);
+    document.getElementById('metric-tokens-trend').textContent = `${formatTokens(lifetime.tokens)} total`;
+
+    document.getElementById('metric-cost').textContent = `$${lifetime.cost_usd.toFixed(2)}`;
+    document.getElementById('metric-cost-window').textContent = comparisonText(comparison.cost_usd, 'cost', summaryWindow);
+    document.getElementById('metric-cost-trend').textContent = '$0.00001/token lifetime estimate';
+
+    document.getElementById('metric-errors').textContent = formatNumber(lifetime.errors);
+    document.getElementById('metric-errors-window').textContent = comparisonText(comparison.errors, 'errors', summaryWindow);
+    document.getElementById('metric-errors-trend').textContent = `${formatNumber(lifetime.errors)} total`;
+  }
+
+  function setSummaryWindow(summaryWindow, store) {
+    const nextWindow = SUMMARY_WINDOWS.has(summaryWindow) ? summaryWindow : DEFAULT_SUMMARY_WINDOW;
+    document.querySelectorAll('[data-summary-window]').forEach((button) => {
+      button.classList.toggle('active', button.dataset.summaryWindow === nextWindow);
+    });
+    if (store && typeof store.setItem === 'function') {
+      store.setItem(SUMMARY_WINDOW_KEY, nextWindow);
+    }
+    return nextWindow;
+  }
+
   // Load usage statistics
   async function loadUsage() {
     const [data, accountData] = await Promise.all([
@@ -529,22 +656,8 @@
     }
 
     state.usage = buildDashboardUsage(data, accountData);
-
-    const totalRequests = state.usage.total_requests || 0;
-    const totalTokens = state.usage.total_tokens || 0;
-    const failedRequests = state.usage.failure_count || 0;
-
-    document.getElementById('metric-requests').textContent = formatNumber(totalRequests);
-    document.getElementById('metric-requests-trend').textContent = totalRequests > 0 ? 'Live data' : 'No requests yet';
-
-    document.getElementById('metric-tokens').textContent = formatTokens(totalTokens);
-    document.getElementById('metric-tokens-trend').textContent = formatTokens(totalTokens) + ' total';
-
-    document.getElementById('metric-cost').textContent = '$' + (totalTokens * 0.00001).toFixed(2);
-    document.getElementById('metric-cost-trend').textContent = '~$0.00001/token';
-
-    document.getElementById('metric-errors').textContent = failedRequests;
-    document.getElementById('metric-errors-trend').textContent = failedRequests === 0 ? 'No errors' : `${failedRequests} failed`;
+    state.summaryWindow = setSummaryWindow(state.summaryWindow, storage);
+    renderSummaryCards(state.usage.summary, state.summaryWindow);
 
     if (state.usage.apis) {
       updateQuotaRings(state.usage.apis, state.quotaSummary);
@@ -559,14 +672,16 @@
 
   // Render mock metrics when API unavailable
   function renderMockMetrics() {
-    document.getElementById('metric-requests').textContent = '--';
+    ['metric-requests', 'metric-tokens', 'metric-cost', 'metric-errors'].forEach((id) => {
+      document.getElementById(id).textContent = '--';
+    });
     document.getElementById('metric-requests-trend').textContent = 'API unavailable';
-    document.getElementById('metric-tokens').textContent = '--';
     document.getElementById('metric-tokens-trend').textContent = 'Enter API key';
-    document.getElementById('metric-cost').textContent = '--';
     document.getElementById('metric-cost-trend').textContent = '--';
-    document.getElementById('metric-errors').textContent = '--';
     document.getElementById('metric-errors-trend').textContent = '--';
+    ['metric-requests-window', 'metric-tokens-window', 'metric-cost-window', 'metric-errors-window'].forEach((id) => {
+      document.getElementById(id).textContent = '--';
+    });
   }
 
   // Update quota rings
@@ -2032,6 +2147,11 @@
       resolveAccountUsage,
       buildDashboardUsage,
       updateQuotaRings,
+      getInitialSummaryWindow,
+      getSummaryWindowValue,
+      summaryWindowLabel,
+      renderSummaryCards,
+      setSummaryWindow,
     };
   }
 

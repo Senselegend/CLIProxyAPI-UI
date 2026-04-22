@@ -237,10 +237,25 @@ func init() {
 	coreusage.RegisterPlugin(&AccountUsagePlugin{})
 }
 
+type DashboardSummaryWindow struct {
+	Requests int64   `json:"requests"`
+	Tokens   int64   `json:"tokens"`
+	CostUSD  float64 `json:"cost_usd"`
+	Errors   int64   `json:"errors"`
+}
+
+type DashboardTopSummary struct {
+	Lifetime   DashboardSummaryWindow `json:"lifetime"`
+	Today      DashboardSummaryWindow `json:"today"`
+	Last7Days  DashboardSummaryWindow `json:"last_7_days"`
+	Last30Days DashboardSummaryWindow `json:"last_30_days"`
+}
+
 // RequestUsageStats combines per-account usage with the standard API key stats.
 type RequestUsageStats struct {
 	ByAccount map[string]AccountUsageData `json:"by_account"`
 	ByAPIKey  map[string]APISnapshot      `json:"by_api_key"`
+	Summary   DashboardTopSummary         `json:"summary"`
 }
 
 type AccountUsageWindowData struct {
@@ -254,6 +269,51 @@ type AccountUsageData struct {
 	Models        map[string]int64      `json:"models"`
 	Last5Hours    AccountUsageWindowData `json:"last_5_hours"`
 	Last7Days     AccountUsageWindowData `json:"last_7_days"`
+}
+
+func BuildDashboardSummaryAt(accounts map[string]accountUsage, snapshot StatisticsSnapshot, now time.Time) DashboardTopSummary {
+	const usdPerToken = 0.00001
+	result := DashboardTopSummary{}
+
+	for _, acc := range accounts {
+		result.Lifetime.Requests += acc.TotalRequests
+		result.Lifetime.Tokens += acc.TotalTokens
+		result.Lifetime.Errors += acc.FailedCount
+	}
+	result.Lifetime.CostUSD = float64(result.Lifetime.Tokens) * usdPerToken
+
+	todayKey := now.Format("2006-01-02")
+	sevenDayCutoff := now.AddDate(0, 0, -6)
+	thirtyDayCutoff := now.AddDate(0, 0, -29)
+
+	for day, requests := range snapshot.RequestsByDay {
+		dayTime, err := time.ParseInLocation("2006-01-02", day, now.Location())
+		if err != nil {
+			continue
+		}
+		tokens := snapshot.TokensByDay[day]
+		errors := snapshot.FailuresByDay[day]
+		if day == todayKey {
+			result.Today.Requests += requests
+			result.Today.Tokens += tokens
+			result.Today.Errors += errors
+		}
+		if !dayTime.Before(sevenDayCutoff) {
+			result.Last7Days.Requests += requests
+			result.Last7Days.Tokens += tokens
+			result.Last7Days.Errors += errors
+		}
+		if !dayTime.Before(thirtyDayCutoff) {
+			result.Last30Days.Requests += requests
+			result.Last30Days.Tokens += tokens
+			result.Last30Days.Errors += errors
+		}
+	}
+
+	result.Today.CostUSD = float64(result.Today.Tokens) * usdPerToken
+	result.Last7Days.CostUSD = float64(result.Last7Days.Tokens) * usdPerToken
+	result.Last30Days.CostUSD = float64(result.Last30Days.Tokens) * usdPerToken
+	return result
 }
 
 func GetRequestUsageStatsAt(snapshot StatisticsSnapshot, now time.Time) RequestUsageStats {
@@ -296,9 +356,12 @@ func GetRequestUsageStatsAt(snapshot StatisticsSnapshot, now time.Time) RequestU
 func GetRequestUsageStats() RequestUsageStats {
 	accountStore := GetAccountUsageStore()
 	apiStats := GetRequestStatistics().Snapshot()
-	result := GetRequestUsageStatsAt(apiStats, time.Now())
+	now := time.Now()
+	accounts := accountStore.Snapshot()
+	result := GetRequestUsageStatsAt(apiStats, now)
+	result.Summary = BuildDashboardSummaryAt(accounts, apiStats, now)
 
-	for email, acc := range accountStore.Snapshot() {
+	for email, acc := range accounts {
 		entry := result.ByAccount[email]
 		entry.TotalRequests = acc.TotalRequests
 		entry.TotalTokens = acc.TotalTokens

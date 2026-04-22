@@ -168,3 +168,168 @@ func TestGetRequestUsageStatsUsesAPIKeyFallbackForRollingWindows(t *testing.T) {
 		t.Fatalf("api-key 7d tokens = %d, want 77", result.ByAccount["api-key-account"].Last7Days.TotalTokens)
 	}
 }
+
+func TestBuildDashboardSummarySeparatesLifetimeAndWindows(t *testing.T) {
+	now := time.Date(2026, 4, 22, 15, 0, 0, 0, time.UTC)
+	stats := NewRequestStatistics()
+	stats.Record(context.Background(), coreusage.Record{
+		Source:      "alpha@example.com",
+		APIKey:      "alpha-key",
+		Model:       "gpt-5.4",
+		RequestedAt: now.Add(-2 * time.Hour),
+		Detail:      coreusage.Detail{TotalTokens: 100},
+	})
+	stats.Record(context.Background(), coreusage.Record{
+		Source:      "alpha@example.com",
+		APIKey:      "alpha-key",
+		Model:       "gpt-5.4",
+		RequestedAt: now.Add(-3 * 24 * time.Hour),
+		Detail:      coreusage.Detail{TotalTokens: 200},
+	})
+	stats.Record(context.Background(), coreusage.Record{
+		Source:      "alpha@example.com",
+		APIKey:      "alpha-key",
+		Model:       "gpt-5.4",
+		RequestedAt: now.Add(-20 * 24 * time.Hour),
+		Detail:      coreusage.Detail{TotalTokens: 300},
+	})
+
+	store := &AccountUsageStore{accounts: map[string]*accountUsage{
+		"alpha@example.com": {
+			TotalRequests: 10,
+			TotalTokens:   5000,
+			FailedCount:   4,
+			Models:        map[string]int64{"gpt-5.4": 10},
+		},
+	}}
+
+	result := BuildDashboardSummaryAt(store.Snapshot(), stats.Snapshot(), now)
+	if result.Lifetime.Requests != 10 {
+		t.Fatalf("lifetime requests = %d, want 10", result.Lifetime.Requests)
+	}
+	if result.Today.Tokens != 100 {
+		t.Fatalf("today tokens = %d, want 100", result.Today.Tokens)
+	}
+	if result.Last7Days.Tokens != 300 {
+		t.Fatalf("7d tokens = %d, want 300", result.Last7Days.Tokens)
+	}
+	if result.Last30Days.Tokens != 600 {
+		t.Fatalf("30d tokens = %d, want 600", result.Last30Days.Tokens)
+	}
+}
+
+func TestBuildDashboardSummaryTracksWindowedFailures(t *testing.T) {
+	now := time.Date(2026, 4, 22, 15, 0, 0, 0, time.UTC)
+	stats := NewRequestStatistics()
+	stats.Record(context.Background(), coreusage.Record{
+		Source:      "alpha@example.com",
+		APIKey:      "alpha-key",
+		Model:       "gpt-5.4",
+		RequestedAt: now.Add(-90 * time.Minute),
+		Failed:      true,
+	})
+
+	store := &AccountUsageStore{accounts: map[string]*accountUsage{
+		"alpha@example.com": {
+			TotalRequests: 20,
+			TotalTokens:   9000,
+			FailedCount:   7,
+			Models:        map[string]int64{"gpt-5.4": 20},
+		},
+	}}
+
+	result := BuildDashboardSummaryAt(store.Snapshot(), stats.Snapshot(), now)
+	if result.Today.Errors != 1 {
+		t.Fatalf("today errors = %d, want 1", result.Today.Errors)
+	}
+	if result.Lifetime.Errors != 7 {
+		t.Fatalf("lifetime errors = %d, want 7", result.Lifetime.Errors)
+	}
+}
+
+func TestBuildDashboardSummaryRestoresThirtyDayWindowAfterReload(t *testing.T) {
+	storageDir := t.TempDir()
+	now := time.Date(2026, 4, 22, 15, 0, 0, 0, time.UTC)
+	stats := NewRequestStatistics()
+	stats.Record(context.Background(), coreusage.Record{
+		Source:      "alpha@example.com",
+		APIKey:      "alpha-key",
+		Model:       "gpt-5.4",
+		RequestedAt: now.Add(-20 * 24 * time.Hour),
+		Detail:      coreusage.Detail{TotalTokens: 300},
+	})
+	stats.Record(context.Background(), coreusage.Record{
+		Source:      "alpha@example.com",
+		APIKey:      "alpha-key",
+		Model:       "gpt-5.4",
+		RequestedAt: now.Add(-2 * time.Hour),
+		Detail:      coreusage.Detail{TotalTokens: 100},
+	})
+	if err := stats.Persist(storageDir); err != nil {
+		t.Fatalf("persist request stats: %v", err)
+	}
+
+	reloaded := NewRequestStatistics()
+	if err := reloaded.Load(storageDir); err != nil {
+		t.Fatalf("load request stats: %v", err)
+	}
+
+	store := &AccountUsageStore{accounts: map[string]*accountUsage{
+		"alpha@example.com": {
+			TotalRequests: 10,
+			TotalTokens:   5000,
+			FailedCount:   4,
+			Models:        map[string]int64{"gpt-5.4": 10},
+		},
+	}}
+
+	result := BuildDashboardSummaryAt(store.Snapshot(), reloaded.Snapshot(), now)
+	if result.Last30Days.Tokens != 400 {
+		t.Fatalf("30d tokens after reload = %d, want 400", result.Last30Days.Tokens)
+	}
+}
+
+func TestGetRequestUsageStatsIncludesSummary(t *testing.T) {
+	accountStore := GetAccountUsageStore()
+	requestStats := GetRequestStatistics()
+
+	accountStore.mu.Lock()
+	accountStore.accounts = map[string]*accountUsage{
+		"alpha@example.com": {
+			TotalRequests: 9,
+			TotalTokens:   4500,
+			FailedCount:   2,
+			Models:        map[string]int64{"gpt-5.4": 9},
+		},
+	}
+	accountStore.mu.Unlock()
+
+	requestStats.mu.Lock()
+	requestStats.totalRequests = 0
+	requestStats.successCount = 0
+	requestStats.failureCount = 0
+	requestStats.totalTokens = 0
+	requestStats.apis = make(map[string]*apiStats)
+	requestStats.requestsByDay = make(map[string]int64)
+	requestStats.requestsByHour = make(map[int]int64)
+	requestStats.tokensByDay = make(map[string]int64)
+	requestStats.tokensByHour = make(map[int]int64)
+	requestStats.failuresByDay = make(map[string]int64)
+	requestStats.mu.Unlock()
+
+	requestStats.Record(context.Background(), coreusage.Record{
+		Source:      "alpha@example.com",
+		APIKey:      "alpha-key",
+		Model:       "gpt-5.4",
+		RequestedAt: time.Now().Add(-2 * time.Hour),
+		Detail:      coreusage.Detail{TotalTokens: 120},
+	})
+
+	result := GetRequestUsageStats()
+	if result.Summary.Lifetime.Tokens != 4500 {
+		t.Fatalf("summary lifetime tokens = %d, want 4500", result.Summary.Lifetime.Tokens)
+	}
+	if result.Summary.Last7Days.Tokens != 120 {
+		t.Fatalf("summary 7d tokens = %d, want 120", result.Summary.Last7Days.Tokens)
+	}
+}

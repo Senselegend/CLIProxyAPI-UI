@@ -15,6 +15,11 @@ const {
   resolveAccountUsage,
   buildDashboardUsage,
   updateQuotaRings,
+  getInitialSummaryWindow,
+  getSummaryWindowValue,
+  summaryWindowLabel,
+  renderSummaryCards,
+  setSummaryWindow,
 } = require('./app.js');
 
 function escapeHtmlForStub(value) {
@@ -66,6 +71,26 @@ function createElementStub(id = null) {
 
 function createDocumentStub() {
   const elements = new Map();
+  const summaryButtons = ['today', 'last_7_days', 'last_30_days'].map((value) => {
+    const button = createElementStub(`summary-${value}`);
+    button.dataset.summaryWindow = value;
+    let active = value === 'last_7_days';
+    button.classList = {
+      add(name) {
+        if (name === 'active') active = true;
+      },
+      remove(name) {
+        if (name === 'active') active = false;
+      },
+      toggle(name, force) {
+        if (name === 'active') active = Boolean(force);
+      },
+      contains(name) {
+        return name === 'active' ? active : false;
+      },
+    };
+    return button;
+  });
 
   const register = (id, element = createElementStub(id)) => {
     elements.set(id, element);
@@ -79,13 +104,18 @@ function createDocumentStub() {
   register('logs-status-filter').value = 'All Status';
   register('metric-requests');
   register('metric-requests-trend');
+  register('metric-requests-window');
   register('metric-tokens');
   register('metric-tokens-trend');
+  register('metric-tokens-window');
   register('metric-cost');
   register('metric-cost-trend');
+  register('metric-cost-window');
   register('metric-errors');
   register('metric-errors-trend');
+  register('metric-errors-window');
   register('active-accounts-count');
+  register('refresh-btn');
   register('quota-5h-percent');
   register('quota-5h-remaining');
   register('quota-5h-ring', { ...createElementStub('quota-5h-ring'), style: {}, getAttribute(name) { return name === 'r' ? '45' : null; } });
@@ -138,10 +168,16 @@ function createDocumentStub() {
     getElementById(id) {
       return elements.get(id) || null;
     },
-    querySelector() {
+    querySelector(selector) {
+      if (selector === '[data-summary-window].active') {
+        return summaryButtons.find((button) => button.classList.contains('active')) || null;
+      }
       return null;
     },
-    querySelectorAll() {
+    querySelectorAll(selector) {
+      if (selector === '[data-summary-window]') {
+        return summaryButtons;
+      }
       return [];
     },
   };
@@ -392,6 +428,110 @@ test('buildDashboardUsage preserves rolling token window fields per account', ()
   assert.equal(usage.apis['alpha@example.com'].last_7_days.total_tokens, 456);
 });
 
+test('buildDashboardUsage preserves summary payload for top cards', () => {
+  const usage = buildDashboardUsage(
+    {
+      usage: {
+        total_requests: 99,
+        total_tokens: 12345,
+        failure_count: 4,
+        summary: {
+          lifetime: { requests: 99, tokens: 12345, cost_usd: 1.23, errors: 4 },
+          today: { requests: 5, tokens: 500, cost_usd: 0.05, errors: 1 },
+          last_7_days: { requests: 20, tokens: 2000, cost_usd: 0.2, errors: 2 },
+          last_30_days: { requests: 70, tokens: 7000, cost_usd: 0.7, errors: 3 },
+        },
+      },
+    },
+    { by_account: {} },
+  );
+
+  assert.equal(usage.summary.last_7_days.tokens, 2000);
+  assert.equal(usage.summary.last_30_days.cost_usd, 0.7);
+});
+
+test('getInitialSummaryWindow defaults to last_7_days and restores valid saved value', () => {
+  assert.equal(getInitialSummaryWindow({ getItem: () => null }), 'last_7_days');
+  assert.equal(getInitialSummaryWindow({ getItem: () => 'last_30_days' }), 'last_30_days');
+  assert.equal(getInitialSummaryWindow({ getItem: () => 'weird' }), 'last_7_days');
+});
+
+test('summaryWindowLabel returns compact labels', () => {
+  assert.equal(summaryWindowLabel('today'), 'Today');
+  assert.equal(summaryWindowLabel('last_7_days'), '7 days');
+  assert.equal(summaryWindowLabel('last_30_days'), '30 days');
+});
+
+test('getSummaryWindowValue returns zeroed fallback when summary window is missing', () => {
+  assert.deepEqual(
+    getSummaryWindowValue({ lifetime: { requests: 10 } }, 'last_30_days'),
+    { requests: 0, tokens: 0, cost_usd: 0, errors: 0 },
+  );
+});
+
+test('renderSummaryCards keeps lifetime values and swaps comparison window copy', () => {
+  global.document = createDocumentStub();
+  try {
+    renderSummaryCards(
+      {
+        lifetime: { requests: 54321, tokens: 2300000, cost_usd: 23.45, errors: 8 },
+        today: { requests: 7, tokens: 700, cost_usd: 0.07, errors: 1 },
+        last_7_days: { requests: 42, tokens: 4200, cost_usd: 0.42, errors: 3 },
+        last_30_days: { requests: 99, tokens: 9900, cost_usd: 0.99, errors: 5 },
+      },
+      'last_30_days',
+    );
+
+    assert.equal(document.getElementById('metric-requests').textContent, '54.3K');
+    assert.equal(document.getElementById('metric-requests-window').textContent, '99 in 30 days');
+    assert.equal(document.getElementById('metric-tokens-window').textContent, '9.9K in 30 days');
+    assert.equal(document.getElementById('metric-cost-window').textContent, '$0.99 in 30 days');
+    assert.equal(document.getElementById('metric-errors-window').textContent, '5 in 30 days');
+    assert.equal(document.getElementById('metric-errors-trend').textContent, '8 total');
+  } finally {
+    delete global.document;
+  }
+});
+
+test('setSummaryWindow updates active button state and persists selection', () => {
+  global.document = createDocumentStub();
+  const writes = [];
+  const fakeStorage = {
+    setItem(key, value) {
+      writes.push([key, value]);
+    },
+  };
+
+  try {
+    setSummaryWindow('today', fakeStorage);
+
+    assert.equal(document.querySelector('[data-summary-window].active').dataset.summaryWindow, 'today');
+    assert.deepEqual(writes, [['dashboard-summary-window', 'today']]);
+  } finally {
+    delete global.document;
+  }
+});
+
+test('setSummaryWindow falls back to default when called with invalid value', () => {
+  global.document = createDocumentStub();
+  const writes = [];
+  const fakeStorage = {
+    setItem(key, value) {
+      writes.push([key, value]);
+    },
+  };
+
+  try {
+    const selected = setSummaryWindow('bogus', fakeStorage);
+
+    assert.equal(selected, 'last_7_days');
+    assert.equal(document.querySelector('[data-summary-window].active').dataset.summaryWindow, 'last_7_days');
+    assert.deepEqual(writes, [['dashboard-summary-window', 'last_7_days']]);
+  } finally {
+    delete global.document;
+  }
+});
+
 test('updateQuotaRings uses rolling token windows for 5h and 7d displays', () => {
   global.document = createDocumentStub();
   try {
@@ -479,6 +619,50 @@ test('handleRefresh still resolves when account recheck fails', async () => {
 
   try {
     await assert.doesNotReject(handleRefresh());
+  } finally {
+    delete global.fetch;
+    delete global.document;
+    global.setTimeout = originalSetTimeout;
+  }
+});
+
+test('handleRefresh ignores concurrent clicks while refresh is in flight', async () => {
+  const originalSetTimeout = global.setTimeout;
+  const calls = [];
+  let releaseUsage;
+  global.document = createDocumentStub();
+  global.setTimeout = (fn) => {
+    fn();
+    return 0;
+  };
+  global.fetch = async (url, options = {}) => {
+    const currentUrl = String(url);
+    calls.push({ url: currentUrl, method: options.method || 'GET' });
+    if (currentUrl.includes('/usage')) {
+      await new Promise((resolve) => {
+        releaseUsage = resolve;
+      });
+      return { ok: true, json: async () => ({ usage: {} }) };
+    }
+    if (currentUrl.includes('/account-usage')) return { ok: true, json: async () => ({ by_account: {} }) };
+    if (currentUrl.includes('/auth-files') && !currentUrl.includes('/recheck')) return { ok: true, json: async () => ({ files: [] }) };
+    if (currentUrl.includes('/quotas')) return { ok: true, json: async () => ({ quotas: [] }) };
+    if (currentUrl.includes('/logs')) return { ok: true, json: async () => ({ logs: [] }) };
+    if (currentUrl.includes('/request-activity')) return { ok: true, json: async () => ({ entries: [] }) };
+    if (currentUrl.includes('/auth-files/recheck')) return { ok: true, json: async () => ({ triggered: 1 }) };
+    throw new Error(`unexpected url ${url}`);
+  };
+
+  try {
+    const first = handleRefresh();
+    const second = handleRefresh();
+    releaseUsage();
+    await Promise.all([first, second]);
+
+    const refreshBtn = document.getElementById('refresh-btn');
+    assert.equal(calls.filter(call => call.url.includes('/usage')).length, 1);
+    assert.equal(calls.filter(call => call.url.includes('/auth-files/recheck')).length, 1);
+    assert.equal(refreshBtn.disabled, false);
   } finally {
     delete global.fetch;
     delete global.document;
