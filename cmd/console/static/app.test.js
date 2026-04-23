@@ -439,6 +439,34 @@ test('deriveAccountStatus does not keep completed recovery cooldown as syncing',
   assert.deepEqual(status, { key: 'error', label: 'error' });
 });
 
+test('deriveAccountStatus preserves backend deactivated status during retry cooldown', () => {
+  const status = deriveAccountStatus(
+    {
+      status: 'deactivated',
+      unavailable: true,
+      next_retry_after: new Date(Date.now() + 60_000).toISOString(),
+      status_message: 'token_invalidated',
+      recovery: { last_run_at: new Date(Date.now() - 30_000).toISOString() },
+    },
+    null,
+  );
+  assert.deepEqual(status, { key: 'deactivated', label: 'deactivated' });
+});
+
+test('deriveAccountStatus preserves backend rate-limited status even without quota wording', () => {
+  const status = deriveAccountStatus(
+    {
+      status: 'rate_limited',
+      unavailable: true,
+      next_retry_after: new Date(Date.now() + 60_000).toISOString(),
+      status_message: 'try again later',
+      recovery: { last_run_at: new Date(Date.now() - 30_000).toISOString() },
+    },
+    null,
+  );
+  assert.deepEqual(status, { key: 'rate_limited', label: 'rate limited' });
+});
+
 test('normalizeActivityEntries hides request activity entries without accounts', () => {
   const rows = normalizeActivityEntries({
     entries: [
