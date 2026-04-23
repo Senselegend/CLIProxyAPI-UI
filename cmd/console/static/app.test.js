@@ -14,11 +14,13 @@ const {
   setLogVisibleCount,
   setLogsForTest,
   setAccountsForTest,
+  resetDashboardStateForTest,
   handleRefresh,
   computeQuotaSummaryFromQuotas,
   resolveAccountUsage,
   buildDashboardUsage,
   updateQuotaRings,
+  getRemainingQuotaDisplay,
   getInitialSummaryWindow,
   getSummaryWindowValue,
   summaryWindowLabel,
@@ -487,11 +489,23 @@ test('computeQuotaSummaryFromQuotas ignores missing windows when averaging used 
   });
 });
 
-test('computeQuotaSummaryFromQuotas returns zero used percent totals when no usable data exists', () => {
+test('computeQuotaSummaryFromQuotas preserves unknown windows when no usable data exists', () => {
   const summary = computeQuotaSummaryFromQuotas([
     {},
     null,
     { primary_window: null, secondary_window: {} },
+  ]);
+
+  assert.deepEqual(summary, {
+    primary_used_percent: null,
+    secondary_used_percent: null,
+  });
+});
+
+test('computeQuotaSummaryFromQuotas preserves explicit zero usage values', () => {
+  const summary = computeQuotaSummaryFromQuotas([
+    { primary_window: { used_percent: 0 }, secondary_window: { used_percent: 0 } },
+    null,
   ]);
 
   assert.deepEqual(summary, {
@@ -762,6 +776,7 @@ test('setSummaryWindow falls back to default when called with invalid value', ()
 });
 
 test('updateQuotaRings uses rolling token windows for 5h and 7d displays', () => {
+  resetDashboardStateForTest();
   global.document = createDocumentStub();
   try {
     updateQuotaRings(
@@ -790,6 +805,34 @@ test('updateQuotaRings uses rolling token windows for 5h and 7d displays', () =>
   } finally {
     delete global.document;
   }
+});
+
+test('getRemainingQuotaDisplay keeps unknown degraded quota honest while preserving explicit zero usage', () => {
+  assert.deepEqual(
+    getRemainingQuotaDisplay(null),
+    { percent: null, label: 'unknown', color: 'var(--text-muted)' },
+  );
+
+  assert.deepEqual(
+    getRemainingQuotaDisplay(0),
+    { percent: 100, label: '100%', color: '#22c55e' },
+  );
+});
+
+test('corrupted 5h quota shape stays unknown when reset metadata exists without used percent', () => {
+  const summary = computeQuotaSummaryFromQuotas([
+    { primary_window: { reset_at: 1710000000 }, secondary_window: { used_percent: 40 } },
+  ]);
+
+  assert.deepEqual(summary, {
+    primary_used_percent: null,
+    secondary_used_percent: 40,
+  });
+
+  assert.deepEqual(
+    getRemainingQuotaDisplay(summary.primary_used_percent),
+    { percent: null, label: 'unknown', color: 'var(--text-muted)' },
+  );
 });
 
 test('handleRefresh reloads data, triggers account recheck, and polls accounts until recovery settles', async () => {
@@ -843,6 +886,7 @@ test('handleRefresh reloads data, triggers account recheck, and polls accounts u
 
 test('handleRefresh still resolves when account recheck fails', async () => {
   const originalSetTimeout = global.setTimeout;
+  resetDashboardStateForTest();
   global.document = createDocumentStub();
   global.setTimeout = (fn) => {
     fn();
@@ -871,6 +915,7 @@ test('handleRefresh still resolves when account recheck fails', async () => {
 test('handleRefresh stops polling after bounded attempts when accounts stay syncing', async () => {
   const originalSetTimeout = global.setTimeout;
   let authFilesCallCount = 0;
+  resetDashboardStateForTest();
   global.document = createDocumentStub();
   global.setTimeout = (fn) => {
     fn();
@@ -910,6 +955,7 @@ test('handleRefresh ignores concurrent clicks while refresh is in flight', async
   const originalSetTimeout = global.setTimeout;
   const calls = [];
   let releaseUsage;
+  resetDashboardStateForTest();
   global.document = createDocumentStub();
   global.setTimeout = (fn) => {
     fn();
@@ -943,6 +989,52 @@ test('handleRefresh ignores concurrent clicks while refresh is in flight', async
     assert.equal(calls.filter(call => call.url.includes('/usage')).length, 1);
     assert.equal(calls.filter(call => call.url.includes('/auth-files/recheck')).length, 1);
     assert.equal(refreshBtn.disabled, false);
+  } finally {
+    delete global.fetch;
+    delete global.document;
+    global.setTimeout = originalSetTimeout;
+  }
+});
+
+test('handleRefresh uses hard refresh path on a fast second click', async () => {
+  const originalSetTimeout = global.setTimeout;
+  const calls = [];
+  const toasts = [];
+  resetDashboardStateForTest();
+  global.document = createDocumentStub();
+  const originalAppendChild = global.document.body.appendChild;
+  global.document.body.appendChild = (node) => {
+    toasts.push(node && node.textContent);
+    if (originalAppendChild) originalAppendChild(node);
+  };
+  global.setTimeout = (fn) => {
+    fn();
+    return 0;
+  };
+  global.fetch = async (url, options = {}) => {
+    const currentUrl = String(url);
+    calls.push({ url: currentUrl, method: options.method || 'GET' });
+    if (currentUrl.includes('/usage')) return { ok: true, json: async () => ({ usage: {} }) };
+    if (currentUrl.includes('/account-usage')) return { ok: true, json: async () => ({ by_account: {} }) };
+    if (currentUrl.includes('/auth-files') && !currentUrl.includes('/recheck')) return { ok: true, json: async () => ({ files: [] }) };
+    if (currentUrl.includes('/quotas') && !currentUrl.includes('/recover')) return { ok: true, json: async () => ({ quotas: [] }) };
+    if (currentUrl.includes('/logs')) return { ok: true, json: async () => ({ logs: [] }) };
+    if (currentUrl.includes('/request-activity')) return { ok: true, json: async () => ({ entries: [] }) };
+    if (currentUrl.includes('/auth-files/recheck')) return { ok: true, json: async () => ({ triggered: 0 }) };
+    if (currentUrl.includes('/quotas/recover')) return { ok: true, json: async () => ({ triggered: true }) };
+    throw new Error(`unexpected url ${url}`);
+  };
+
+  try {
+    await handleRefresh();
+    await handleRefresh();
+
+    assert.equal(calls.filter(call => call.url.includes('/auth-files/recheck')).length, 1);
+    assert.equal(calls.filter(call => call.url.includes('/quotas/recover') && call.method === 'POST').length, 1);
+    assert.equal(calls.filter(call => call.url.includes('/usage')).length, 3);
+    assert.equal(calls.filter(call => call.url.includes('/account-usage')).length, 3);
+    assert.equal(calls.filter(call => call.url.includes('/logs')).length, 3);
+    assert.match(toasts.join(' '), /Hard refresh in progress/);
   } finally {
     delete global.fetch;
     delete global.document;

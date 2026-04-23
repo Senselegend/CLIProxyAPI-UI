@@ -80,21 +80,24 @@ func (r *QuotaRefresher) refreshAccount(account AuthProvider) {
 		return
 	}
 
+	store := GetQuotaStore()
+	prior := store.Get(account.ID())
+
 	payload, err := FetchWhamUsage(ctx, token, account.GetAccountID())
 	if err != nil {
-		quota := &AccountQuota{
+		quota := PreserveQuotaWindows(&AccountQuota{
 			AccountID:  account.ID(),
 			Source:     "chatgpt",
 			FetchedAt:  time.Now(),
 			FetchError: err.Error(),
-		}
-		GetQuotaStore().Set(account.ID(), quota)
+		}, prior)
+		store.Set(account.ID(), quota)
 		log.Printf("quota refresh failed for %s: %v", account.ID(), err)
 		return
 	}
 
-	quota := PayloadToAccountQuota(account.ID(), payload)
-	GetQuotaStore().Set(account.ID(), quota)
+	quota := PreserveQuotaWindows(PayloadToAccountQuota(account.ID(), payload), prior)
+	store.Set(account.ID(), quota)
 }
 
 // PayloadToAccountQuota converts WhamUsagePayload to AccountQuota.
@@ -134,6 +137,65 @@ func PayloadToAccountQuota(accountID string, payload *WhamUsagePayload) *Account
 	}
 
 	return quota
+}
+
+func PreserveQuotaWindows(next *AccountQuota, prior *AccountQuota) *AccountQuota {
+	if next == nil || prior == nil {
+		return next
+	}
+	if next.PlanType == "" {
+		next.PlanType = prior.PlanType
+	}
+	if next.PrimaryWindow != nil && next.PrimaryWindow.UsedPercent == nil && prior.PrimaryWindow != nil && prior.PrimaryWindow.UsedPercent != nil {
+		next.PrimaryWindow = cloneQuotaWindow(prior.PrimaryWindow)
+	}
+	if next.SecondaryWindow != nil && next.SecondaryWindow.UsedPercent == nil && prior.SecondaryWindow != nil && prior.SecondaryWindow.UsedPercent != nil {
+		next.SecondaryWindow = cloneQuotaWindow(prior.SecondaryWindow)
+	}
+	if next.PrimaryWindow == nil && prior.PrimaryWindow != nil && prior.PrimaryWindow.UsedPercent != nil {
+		next.PrimaryWindow = cloneQuotaWindow(prior.PrimaryWindow)
+	}
+	if next.SecondaryWindow == nil && prior.SecondaryWindow != nil && prior.SecondaryWindow.UsedPercent != nil {
+		next.SecondaryWindow = cloneQuotaWindow(prior.SecondaryWindow)
+	}
+	if next.CreditsHas == nil && prior.CreditsHas != nil {
+		next.CreditsHas = cloneBool(prior.CreditsHas)
+	}
+	if next.CreditsUnlimited == nil && prior.CreditsUnlimited != nil {
+		next.CreditsUnlimited = cloneBool(prior.CreditsUnlimited)
+	}
+	if next.CreditsBalance == nil && prior.CreditsBalance != nil {
+		next.CreditsBalance = cloneFloat64(prior.CreditsBalance)
+	}
+	return next
+}
+
+func cloneQuotaWindow(window *QuotaWindow) *QuotaWindow {
+	if window == nil {
+		return nil
+	}
+	cloned := *window
+	if window.UsedPercent != nil {
+		used := *window.UsedPercent
+		cloned.UsedPercent = &used
+	}
+	return &cloned
+}
+
+func cloneBool(v *bool) *bool {
+	if v == nil {
+		return nil
+	}
+	cloned := *v
+	return &cloned
+}
+
+func cloneFloat64(v *float64) *float64 {
+	if v == nil {
+		return nil
+	}
+	cloned := *v
+	return &cloned
 }
 
 func parseFloat(v any) *float64 {

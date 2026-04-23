@@ -516,6 +516,7 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/account-usage", s.mgmt.GetAccountUsageStatistics)
 		mgmt.GET("/quotas", s.mgmt.GetQuotas)
 		mgmt.GET("/quotas/:accountId", s.mgmt.GetQuota)
+		mgmt.POST("/quotas/recover", s.mgmt.PostQuotaRecovery)
 		mgmt.GET("/config", s.mgmt.GetConfig)
 		mgmt.GET("/config.yaml", s.mgmt.GetConfigYAML)
 		mgmt.PUT("/config.yaml", s.mgmt.PutConfigYAML)
@@ -1099,7 +1100,8 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 	if dirSetter, ok := tokenStore.(interface{ SetBaseDir(string) }); ok {
 		dirSetter.SetBaseDir(cfg.AuthDir)
 	}
-	if GetQuotaStartupState() == startupStateNotStarted {
+	quotaStartupState := GetQuotaStartupState()
+	if quotaStartupState == startupStateNotStarted || quotaStartupState == startupStateError {
 		if err := RunStartupQuotaSync(context.Background()); err != nil {
 			log.Errorf("startup quota sync failed: %v", err)
 		}

@@ -19,6 +19,8 @@ func TestClassifyPermanentAuthFailure_ExplicitSignalsOnly(t *testing.T) {
 		want bool
 	}{
 		{name: "401 revoked token", err: &Error{HTTPStatus: 401, Message: "revoked token"}, want: true},
+		{name: "401 token_invalidated", err: &Error{HTTPStatus: 401, Message: "token_invalidated"}, want: true},
+		{name: "401 refresh token invalidated", err: &Error{HTTPStatus: 401, Message: "refresh token invalidated by provider"}, want: true},
 		{name: "403 banned account", err: &Error{HTTPStatus: 403, Message: "account banned"}, want: true},
 		{name: "context canceled is transient", err: &Error{Message: "context canceled"}, want: false},
 		{name: "generic unauthorized stays non-permanent", err: &Error{HTTPStatus: 401, Message: "unauthorized"}, want: false},
@@ -85,6 +87,29 @@ func TestApplyAuthFailureState_PermanentFailureBecomesDeactivated(t *testing.T) 
 	}
 	if !auth.Unavailable {
 		t.Fatalf("Unavailable = %v, want true", auth.Unavailable)
+	}
+}
+
+func TestApplyAuthFailureState_TokenInvalidatedBecomesDeactivated(t *testing.T) {
+	now := time.Now()
+	resultErr := &Error{HTTPStatus: 401, Message: "token_invalidated"}
+	auth := &Auth{
+		ID:            "auth-1",
+		Provider:      "codex",
+		Status:        StatusActive,
+		StatusMessage: "previous status",
+	}
+
+	applyAuthFailureState(auth, resultErr, nil, now)
+
+	if auth.Status != StatusDeactivated {
+		t.Fatalf("Status = %q, want %q", auth.Status, StatusDeactivated)
+	}
+	if auth.StatusMessage != "token_invalidated" {
+		t.Fatalf("StatusMessage = %q, want %q", auth.StatusMessage, "token_invalidated")
+	}
+	if auth.LastError == nil || auth.LastError.Message != "token_invalidated" {
+		t.Fatalf("LastError = %#v, want message %q", auth.LastError, "token_invalidated")
 	}
 }
 
@@ -537,6 +562,54 @@ func TestManager_TriggerEligibleAuthRechecks_CooldownCountsAsAlreadyInFlight(t *
 	}
 	if summary.SkippedNotEligible != 0 {
 		t.Fatalf("SkippedNotEligible = %d, want 0", summary.SkippedNotEligible)
+	}
+}
+
+func TestMarkResult_ModelTokenInvalidatedBecomesDeactivated(t *testing.T) {
+	m := NewManager(nil, nil, nil)
+
+	auth := &Auth{
+		ID:       "auth-1",
+		Provider: "codex",
+		Status:   StatusActive,
+	}
+	if _, err := m.Register(context.Background(), auth); err != nil {
+		t.Fatalf("register auth: %v", err)
+	}
+
+	m.MarkResult(context.Background(), Result{
+		AuthID:   auth.ID,
+		Provider: auth.Provider,
+		Model:    "gpt-4.1",
+		Success:  false,
+		Error:    &Error{HTTPStatus: http.StatusUnauthorized, Message: "token_invalidated"},
+	})
+
+	m.mu.RLock()
+	updated := m.auths[auth.ID].Clone()
+	m.mu.RUnlock()
+
+	if updated.Status != StatusDeactivated {
+		t.Fatalf("Status = %q, want %q", updated.Status, StatusDeactivated)
+	}
+	if !updated.Unavailable {
+		t.Fatalf("Unavailable = %v, want true", updated.Unavailable)
+	}
+	if updated.StatusMessage != "token_invalidated" {
+		t.Fatalf("StatusMessage = %q, want %q", updated.StatusMessage, "token_invalidated")
+	}
+	state := updated.ModelStates["gpt-4.1"]
+	if state == nil {
+		t.Fatalf("ModelStates[gpt-4.1] = nil")
+	}
+	if state.Status != StatusDeactivated {
+		t.Fatalf("ModelStates[gpt-4.1].Status = %q, want %q", state.Status, StatusDeactivated)
+	}
+	if !state.NextRetryAfter.IsZero() {
+		t.Fatalf("ModelStates[gpt-4.1].NextRetryAfter = %v, want zero", state.NextRetryAfter)
+	}
+	if state.Quota != (QuotaState{}) {
+		t.Fatalf("ModelStates[gpt-4.1].Quota = %#v, want zero value", state.Quota)
 	}
 }
 

@@ -9,6 +9,7 @@
   const SUMMARY_WINDOW_KEY = 'dashboard-summary-window';
   const RECOVERY_POLL_ATTEMPTS = 4;
   const RECOVERY_POLL_DELAY_MS = 1500;
+  const HARD_REFRESH_DOUBLE_CLICK_WINDOW_MS = 1500;
   const DEFAULT_SUMMARY_WINDOW = 'last_7_days';
   const SUMMARY_WINDOWS = new Set(['today', 'last_7_days', 'last_30_days']);
 
@@ -37,6 +38,7 @@
   let detailCountdownTimer = null;
   let startupSyncPollTimer = null;
   let refreshInFlight = false;
+  let lastRefreshCompletedAt = 0;
   let lastLogsFilterSignature = '';
 
   // Icons
@@ -545,6 +547,10 @@
     return await apiFetch('/auth-files/recheck', { method: 'POST' });
   }
 
+  async function triggerQuotaRecovery() {
+    return await apiFetch('/quotas/recover', { method: 'POST' });
+  }
+
   function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -577,6 +583,7 @@
     }
 
     const refreshButton = document.getElementById('refresh-btn');
+    const hardRefresh = (Date.now() - lastRefreshCompletedAt) <= HARD_REFRESH_DOUBLE_CLICK_WINDOW_MS;
     refreshInFlight = true;
     if (refreshButton) {
       refreshButton.disabled = true;
@@ -586,14 +593,25 @@
     }
     try {
       await loadData();
-      const recheck = await triggerAccountRecheck().catch(() => null);
-      if (recheck && recheck.triggered > 0) {
-        showToast(`Rechecking ${recheck.triggered} accounts`, 'info');
+      let recovery = null;
+      if (hardRefresh) {
+        showToast('Hard refresh in progress', 'info');
+        recovery = await triggerQuotaRecovery().catch(() => null);
+      } else {
+        recovery = await triggerAccountRecheck().catch(() => null);
+        if (recovery && recovery.triggered > 0) {
+          showToast(`Rechecking ${recovery.triggered} accounts`, 'info');
+        }
       }
-      await runRecoveryPolling(recheck);
-      await loadAccounts();
+      await runRecoveryPolling(recovery);
+      if (hardRefresh) {
+        await loadData();
+      } else {
+        await loadAccounts();
+      }
     } finally {
       refreshInFlight = false;
+      lastRefreshCompletedAt = Date.now();
       if (refreshButton) {
         refreshButton.disabled = false;
         if (refreshButton.classList && typeof refreshButton.classList.remove === 'function') {
@@ -793,8 +811,8 @@
   // Update quota rings
   function updateQuotaRings(apis, quotaSummary) {
     const syncing = isQuotaStartupSyncing() && !quotaSummary;
-    const fivehPercent = syncing ? null : (quotaSummary ? Math.round(quotaSummary.primary_used_percent) : 0);
-    const sevendPercent = syncing ? null : (quotaSummary ? Math.round(quotaSummary.secondary_used_percent) : 0);
+    const fivehPercent = syncing ? null : (quotaSummary ? quotaSummary.primary_used_percent : null);
+    const sevendPercent = syncing ? null : (quotaSummary ? quotaSummary.secondary_used_percent : null);
 
     const apiKeys = apis && Object.keys(apis);
     const total5hTokens = apiKeys ? apiKeys.reduce((sum, key) => sum + ((((apis[key].last_5_hours) || {}).total_tokens) || 0), 0) : 0;
@@ -865,12 +883,16 @@
       const values = quotaList
         .map(quota => {
           const window = quota && quota[windowKey];
-          return Number(window && window.used_percent);
+          if (!window || window.used_percent == null) {
+            return null;
+          }
+          const value = Number(window.used_percent);
+          return Number.isFinite(value) ? value : null;
         })
         .filter(Number.isFinite);
 
       if (values.length === 0) {
-        return 0;
+        return null;
       }
 
       const average = values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -1003,11 +1025,14 @@
   }
 
   function getRemainingQuotaDisplay(usedPercent) {
-    if (usedPercent == null && isQuotaStartupSyncing()) {
-      return { percent: null, label: 'syncing', color: 'var(--accent)' };
+    if (usedPercent == null) {
+      if (isQuotaStartupSyncing()) {
+        return { percent: null, label: 'syncing', color: 'var(--accent)' };
+      }
+      return { percent: null, label: 'unknown', color: 'var(--text-muted)' };
     }
 
-    const remaining = Math.max(0, 100 - (Number(usedPercent) || 0));
+    const remaining = Math.max(0, 100 - Number(usedPercent));
     return { percent: remaining, label: remaining + '%', color: getQuotaColor(remaining) };
   }
 
@@ -2382,6 +2407,18 @@
     state.accounts = accounts;
   }
 
+  function resetDashboardStateForTest() {
+    refreshInFlight = false;
+    lastRefreshCompletedAt = 0;
+    state.quotaStartupSync = null;
+    state.quotaSummary = null;
+    state.accounts = [];
+    state.usage = null;
+    state.logs = [];
+    state.logVisibleCount = LOGS_PAGE_SIZE;
+    lastLogsFilterSignature = '';
+  }
+
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       deriveAccountStatus,
@@ -2396,11 +2433,13 @@
       setLogVisibleCount,
       setLogsForTest,
       setAccountsForTest,
+      resetDashboardStateForTest,
       handleRefresh,
       computeQuotaSummaryFromQuotas,
       resolveAccountUsage,
       buildDashboardUsage,
       updateQuotaRings,
+      getRemainingQuotaDisplay,
       getInitialSummaryWindow,
       getSummaryWindowValue,
       summaryWindowLabel,
