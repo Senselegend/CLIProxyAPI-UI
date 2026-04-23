@@ -965,6 +965,12 @@
     if (backendStatus === 'disabled') {
       return { key: 'disabled', label: 'disabled' };
     }
+    if (backendStatus === 'deactivated') {
+      return { key: 'deactivated', label: 'deactivated' };
+    }
+    if (backendStatus === 'rate_limited') {
+      return { key: 'rate_limited', label: 'rate limited' };
+    }
 
     const startupSyncStatus = getStartupSyncAccountStatus(file, quota);
     if (startupSyncStatus) {
@@ -980,12 +986,6 @@
       return { key: 'rate_limited', label: 'rate limited' };
     }
 
-    if (backendStatus === 'rate_limited') {
-      return { key: 'rate_limited', label: 'rate limited' };
-    }
-    if (backendStatus === 'deactivated') {
-      return { key: 'deactivated', label: 'deactivated' };
-    }
     if (backendStatus === 'error') {
       return { key: 'error', label: 'error' };
     }
