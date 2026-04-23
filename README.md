@@ -8,9 +8,11 @@ So you can use local or multi-account CLI access with OpenAI(include Responses)/
 
 ## Quick Setup for Codex and Claude Code
 
-If your local CLIProxyAPI server is running on the port from `config.yaml` (for example `8317`) and you use `my-local-proxy-key` as the local bearer token, configure clients like this.
+Russian version: [README_RU.md](README_RU.md)
 
-### Codex
+This quick setup is specifically for using Codex/OpenAI accounts through CLIProxyAPI.
+
+### Codex CLI
 
 For Codex on macOS, set the token through `launchd` before starting the app:
 
@@ -34,6 +36,7 @@ wire_api = "responses"
 
 Notes:
 - `env_key` must be the environment variable name, not the token value itself.
+- `wire_api = "responses"` is required for Codex CLI.
 - After running `launchctl setenv ...`, fully restart the Codex app.
 
 ### Claude Code
@@ -44,9 +47,28 @@ Point Claude Code to the local proxy with this config:
 {
   "env": {
     "ANTHROPIC_BASE_URL": "http://localhost:8317",
-    "ANTHROPIC_AUTH_TOKEN": "my-local-proxy-key"
+    "ANTHROPIC_AUTH_TOKEN": "my-local-proxy-key",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gpt-5.4-mini",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "gpt-5.4",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "gpt-5.4"
   },
   "model": "gpt-5.4"
+}
+```
+
+Why configure it this way:
+- `model` sets your default interactive model for normal GPT-backed usage.
+- `ANTHROPIC_DEFAULT_HAIKU_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, and `ANTHROPIC_DEFAULT_OPUS_MODEL` keep Claude Code's internal model buckets mapped to the GPT models you want: Haiku → `gpt-5.4-mini`, Sonnet → `gpt-5.4`, Opus → `gpt-5.4`.
+- This lets Claude Code keep using its normal model-selection behavior for agents and internal routing while still sending those choices through your proxy onto the GPT-backed models you prefer.
+
+If you are using other providers through CLIProxyAPI and do not need the Codex/OpenAI model mapping, the default Claude Code config is just:
+
+```json
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://localhost:8317",
+    "ANTHROPIC_AUTH_TOKEN": "my-local-proxy-key"
+  }
 }
 ```
 
