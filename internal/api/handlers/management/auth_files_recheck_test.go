@@ -215,6 +215,9 @@ func TestListAuthFilesIncludesRecoveryMetadata(t *testing.T) {
 	if !ok {
 		t.Fatalf("file entry = %#v, want object", files[0])
 	}
+	if entry["status"] != string(coreauth.StatusError) {
+		t.Fatalf("status = %#v, want %q", entry["status"], coreauth.StatusError)
+	}
 	recovery, ok := entry["recovery"].(map[string]any)
 	if !ok {
 		t.Fatalf("recovery = %#v, want object", entry["recovery"])
@@ -224,6 +227,69 @@ func TestListAuthFilesIncludesRecoveryMetadata(t *testing.T) {
 	}
 	if recovery["last_run_at"] != lastRunAt.Format(time.RFC3339) {
 		t.Fatalf("recovery.last_run_at = %#v, want %s", recovery["last_run_at"], lastRunAt.Format(time.RFC3339))
+	}
+}
+
+func TestListAuthFilesExposesDeactivatedStatusForInvalidatedAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	authDir := t.TempDir()
+	filePath := filepath.Join(authDir, "codex-user.json")
+	if err := os.WriteFile(filePath, []byte(`{"type":"codex","email":"user@example.com"}`), 0o600); err != nil {
+		t.Fatalf("write auth file: %v", err)
+	}
+
+	manager := coreauth.NewManager(nil, nil, nil)
+	if _, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID:            "auth-a",
+		FileName:      "codex-user.json",
+		Provider:      "codex",
+		Status:        coreauth.StatusDeactivated,
+		StatusMessage: "token_invalidated",
+		Unavailable:   true,
+		LastError:     &coreauth.Error{HTTPStatus: http.StatusUnauthorized, Message: "token_invalidated"},
+		Attributes: map[string]string{
+			"path": filePath,
+		},
+		Metadata: map[string]any{
+			"email": "user@example.com",
+		},
+	}); err != nil {
+		t.Fatalf("register auth: %v", err)
+	}
+
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir}, manager)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v0/management/auth-files", nil)
+
+	h.ListAuthFiles(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	files, ok := payload["files"].([]any)
+	if !ok || len(files) != 1 {
+		t.Fatalf("files = %#v, want single entry", payload["files"])
+	}
+	entry, ok := files[0].(map[string]any)
+	if !ok {
+		t.Fatalf("file entry = %#v, want object", files[0])
+	}
+	if entry["status"] != string(coreauth.StatusDeactivated) {
+		t.Fatalf("status = %#v, want %q", entry["status"], coreauth.StatusDeactivated)
+	}
+	if entry["status_message"] != "token_invalidated" {
+		t.Fatalf("status_message = %#v, want %q", entry["status_message"], "token_invalidated")
+	}
+	if entry["unavailable"] != true {
+		t.Fatalf("unavailable = %#v, want true", entry["unavailable"])
 	}
 }
 

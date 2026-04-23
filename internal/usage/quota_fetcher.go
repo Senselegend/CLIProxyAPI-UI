@@ -31,10 +31,10 @@ type RateLimitData struct {
 
 // UsageWindow represents a single rate-limit window.
 type UsageWindow struct {
-	UsedPercent        float64 `json:"used_percent,omitempty"`
-	LimitWindowSeconds int     `json:"limit_window_seconds,omitempty"`
-	ResetAt            int64   `json:"reset_at,omitempty"`
-	ResetAfterSeconds  int     `json:"reset_after_seconds,omitempty"`
+	UsedPercent        *float64 `json:"used_percent,omitempty"`
+	LimitWindowSeconds int      `json:"limit_window_seconds,omitempty"`
+	ResetAt            int64    `json:"reset_at,omitempty"`
+	ResetAfterSeconds  int      `json:"reset_after_seconds,omitempty"`
 }
 
 // CreditsData contains credit balance info.

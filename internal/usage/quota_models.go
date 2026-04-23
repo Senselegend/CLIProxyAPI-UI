@@ -7,11 +7,11 @@ import (
 
 // QuotaWindow represents a single usage window (primary/secondary).
 type QuotaWindow struct {
-	UsedPercent   float64 `json:"used_percent"`
-	Capacity      float64 `json:"capacity,omitempty"`
-	UsedCredits   float64 `json:"used_credits,omitempty"`
-	ResetAt       int64   `json:"reset_at,omitempty"`
-	WindowMinutes int     `json:"window_minutes,omitempty"`
+	UsedPercent   *float64 `json:"used_percent,omitempty"`
+	Capacity      float64  `json:"capacity,omitempty"`
+	UsedCredits   float64  `json:"used_credits,omitempty"`
+	ResetAt       int64    `json:"reset_at,omitempty"`
+	WindowMinutes int      `json:"window_minutes,omitempty"`
 }
 
 // Plan credit capacities for weighted-average aggregation.
@@ -61,7 +61,7 @@ func (w *QuotaWindow) hasData() bool {
 	if w == nil {
 		return false
 	}
-	return w.UsedPercent != 0 ||
+	return w.UsedPercent != nil ||
 		w.Capacity != 0 ||
 		w.UsedCredits != 0 ||
 		w.ResetAt != 0 ||
@@ -84,7 +84,7 @@ func AggregateQuotas(quotas []AccountQuota, window string) (avg float64) {
 		} else {
 			w = q.SecondaryWindow
 		}
-		if !w.hasData() {
+		if !w.hasData() || w.UsedPercent == nil {
 			continue
 		}
 		cap := w.capacity(window, q.PlanType)
@@ -92,7 +92,7 @@ func AggregateQuotas(quotas []AccountQuota, window string) (avg float64) {
 			continue
 		}
 		totalCap += *cap
-		totalUsed += (*cap * w.UsedPercent) / 100.0
+		totalUsed += (*cap * *w.UsedPercent) / 100.0
 	}
 	if totalCap == 0 {
 		return 0

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -20,13 +21,19 @@ const (
 	startupStateError      = "error"
 )
 
+var errQuotaTokenStoreUnavailable = errors.New("token store unavailable")
+
 var (
 	quotaRefresherStarted bool
+	quotaRefresher        *usage.QuotaRefresher
 	quotaRefresherMu      sync.Mutex
 
 	quotaStartupStateMu sync.RWMutex
 	quotaStartupState   = startupStateNotStarted
 	quotaStartupMessage string
+
+	quotaRecoveryMu      sync.Mutex
+	quotaRecoveryRunning bool
 
 	quotaAutostartMaxAttempts = 60
 	quotaAutostartSleepFunc   = func() {
@@ -35,13 +42,29 @@ var (
 
 	loadQuotaAccountsFunc   = loadQuotaAccounts
 	runQuotaSyncFunc        = runQuotaSync
-	startQuotaRefresherFunc = func(accounts []usage.AuthProvider) {
-		usage.NewQuotaRefresher(5 * time.Minute).Start(accounts)
+	startQuotaRefresherFunc = func(accounts []usage.AuthProvider) *usage.QuotaRefresher {
+		refresher := usage.NewQuotaRefresher(5 * time.Minute)
+		refresher.Start(accounts)
+		return refresher
+	}
+	stopQuotaRefresherFunc = func(refresher *usage.QuotaRefresher) {
+		if refresher != nil {
+			refresher.Stop()
+		}
 	}
 )
 
 func init() {
 	managementHandlers.SetQuotaStartupGetters(GetQuotaStartupState, GetQuotaStartupMessage)
+	managementHandlers.SetQuotaRecoveryTrigger(func(ctx context.Context) managementHandlers.QuotaRecoveryTriggerResult {
+		result := TriggerQuotaRecovery(ctx)
+		return managementHandlers.QuotaRecoveryTriggerResult{
+			Triggered:      result.Triggered,
+			AlreadyRunning: result.AlreadyRunning,
+			StartupState:   result.StartupState,
+			MissingRuntime: result.MissingRuntime,
+		}
+	})
 }
 
 func GetQuotaStartupState() string {
@@ -79,35 +102,80 @@ func tryStartQuotaRefresher() {
 	log.Printf("quota refresher: %s", msg)
 }
 
+type QuotaRecoveryTriggerResult struct {
+	Triggered      bool   `json:"triggered"`
+	AlreadyRunning bool   `json:"already_running"`
+	StartupState   string `json:"startup_state"`
+	MissingRuntime bool   `json:"missing_runtime"`
+}
+
 func RunStartupQuotaSync(ctx context.Context) error {
-	return RunInitialQuotaSync(ctx)
+	_, err := runQuotaRecovery(ctx, false)
+	return err
 }
 
 func RunInitialQuotaSync(ctx context.Context) error {
+	_, err := runQuotaRecovery(ctx, false)
+	return err
+}
+
+func TriggerQuotaRecovery(ctx context.Context) QuotaRecoveryTriggerResult {
+	result, _ := runQuotaRecovery(ctx, true)
+	return result
+}
+
+func runQuotaRecovery(ctx context.Context, forceRestartRefresher bool) (QuotaRecoveryTriggerResult, error) {
+	quotaRecoveryMu.Lock()
+	if quotaRecoveryRunning {
+		quotaRecoveryMu.Unlock()
+		return QuotaRecoveryTriggerResult{
+			AlreadyRunning: true,
+			StartupState:   GetQuotaStartupState(),
+		}, nil
+	}
+	quotaRecoveryRunning = true
+	quotaRecoveryMu.Unlock()
+
+	defer func() {
+		quotaRecoveryMu.Lock()
+		quotaRecoveryRunning = false
+		quotaRecoveryMu.Unlock()
+	}()
+
 	setQuotaStartupState(startupStateSyncing, "")
 
 	accounts, err := loadQuotaAccountsFunc(ctx)
 	if err != nil {
 		msg := fmt.Sprintf("load quota accounts: %v", err)
 		setQuotaStartupState(startupStateError, msg)
-		return fmt.Errorf("load quota accounts: %w", err)
+		return QuotaRecoveryTriggerResult{
+			Triggered:      true,
+			StartupState:   GetQuotaStartupState(),
+			MissingRuntime: errors.Is(err, errQuotaTokenStoreUnavailable),
+		}, fmt.Errorf("load quota accounts: %w", err)
 	}
 
 	if err := runQuotaSyncFunc(ctx, accounts); err != nil {
 		msg := fmt.Sprintf("run quota sync: %v", err)
 		setQuotaStartupState(startupStateError, msg)
-		return fmt.Errorf("run quota sync: %w", err)
+		return QuotaRecoveryTriggerResult{
+			Triggered:    true,
+			StartupState: GetQuotaStartupState(),
+		}, fmt.Errorf("run quota sync: %w", err)
 	}
 
-	startQuotaRefresherOnce(accounts)
+	startQuotaRefresher(accounts, forceRestartRefresher)
 	setQuotaStartupState(startupStateReady, "")
-	return nil
+	return QuotaRecoveryTriggerResult{
+		Triggered:    true,
+		StartupState: GetQuotaStartupState(),
+	}, nil
 }
 
 func loadQuotaAccounts(ctx context.Context) ([]usage.AuthProvider, error) {
 	store := sdkAuth.GetTokenStore()
 	if store == nil {
-		return nil, fmt.Errorf("token store unavailable")
+		return nil, errQuotaTokenStoreUnavailable
 	}
 
 	auths, err := store.List(ctx)
@@ -139,34 +207,42 @@ func runQuotaSync(ctx context.Context, accounts []usage.AuthProvider) error {
 			continue
 		}
 
+		store := usage.GetQuotaStore()
+		prior := store.Get(account.ID())
+
 		payload, err := usage.FetchWhamUsage(ctx, token, account.GetAccountID())
 		if err != nil {
-			quota := &usage.AccountQuota{
+			quota := usage.PreserveQuotaWindows(&usage.AccountQuota{
 				AccountID:  account.ID(),
 				Source:     "chatgpt",
 				FetchedAt:  time.Now(),
 				FetchError: err.Error(),
-			}
-			usage.GetQuotaStore().Set(account.ID(), quota)
+			}, prior)
+			store.Set(account.ID(), quota)
 			if firstErr == nil {
 				firstErr = fmt.Errorf("refresh %s: %w", account.ID(), err)
 			}
 			continue
 		}
 
-		usage.GetQuotaStore().Set(account.ID(), usage.PayloadToAccountQuota(account.ID(), payload))
+		store.Set(account.ID(), usage.PreserveQuotaWindows(usage.PayloadToAccountQuota(account.ID(), payload), prior))
 	}
 	return firstErr
 }
 
-func startQuotaRefresherOnce(accounts []usage.AuthProvider) {
+func startQuotaRefresher(accounts []usage.AuthProvider, forceRestart bool) {
 	quotaRefresherMu.Lock()
 	defer quotaRefresherMu.Unlock()
-	if quotaRefresherStarted {
+	if quotaRefresherStarted && !forceRestart {
 		return
 	}
-	quotaRefresherStarted = true
-	startQuotaRefresherFunc(accounts)
+	if forceRestart && quotaRefresher != nil {
+		stopQuotaRefresherFunc(quotaRefresher)
+		quotaRefresher = nil
+		quotaRefresherStarted = false
+	}
+	quotaRefresher = startQuotaRefresherFunc(accounts)
+	quotaRefresherStarted = quotaRefresher != nil
 	log.Printf("Started quota refresher for %d accounts", len(accounts))
 }
 

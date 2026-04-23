@@ -2409,10 +2409,18 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 						state.StatusMessage = result.Error.Message
 						auth.LastError = cloneError(result.Error)
 						auth.StatusMessage = result.Error.Message
+						if isPermanentAuthFailure(result.Error) {
+							state.Status = StatusDeactivated
+							state.NextRetryAfter = time.Time{}
+							state.Quota = QuotaState{}
+						}
 					}
 
 					statusCode := statusCodeFromResult(result.Error)
-					if isModelSupportResultError(result.Error) {
+					if isPermanentAuthFailure(result.Error) {
+						state.NextRetryAfter = time.Time{}
+						state.Quota = QuotaState{}
+					} else if isModelSupportResultError(result.Error) {
 						next := now.Add(12 * time.Hour)
 						state.NextRetryAfter = next
 						suspendReason = "model_not_supported"
@@ -2484,7 +2492,11 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 						}
 					}
 
-					auth.Status = StatusError
+					if isPermanentAuthFailure(result.Error) {
+						auth.Status = StatusDeactivated
+					} else {
+						auth.Status = StatusError
+					}
 					auth.UpdatedAt = now
 					updateAggregatedAvailability(auth, now)
 				}
@@ -2584,7 +2596,7 @@ func updateAggregatedAvailability(auth *Auth, now time.Time) {
 		}
 		hasState = true
 		stateUnavailable := false
-		if state.Status == StatusDisabled {
+		if state.Status == StatusDisabled || state.Status == StatusDeactivated {
 			stateUnavailable = true
 		} else if state.Unavailable {
 			if state.NextRetryAfter.IsZero() {
@@ -2861,7 +2873,7 @@ func isPermanentAuthFailure(err *Error) bool {
 
 	switch err.HTTPStatus {
 	case http.StatusUnauthorized:
-		return hasAny("revoked", "invalid token", "expired refresh token")
+		return hasAny("revoked", "invalid token", "token_invalidated", "token invalidated", "refresh token invalidated", "expired refresh token")
 	case http.StatusForbidden:
 		return hasAny("banned", "suspended", "deactivated", "account disabled")
 	default:
