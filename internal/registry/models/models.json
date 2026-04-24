@@ -1321,6 +1321,32 @@
           "xhigh"
         ]
       }
+    },
+    {
+      "id": "gpt-5.5",
+      "object": "model",
+      "created": 1776902400,
+      "owned_by": "openai",
+      "type": "openai",
+      "display_name": "GPT 5.5",
+      "version": "gpt-5.5",
+      "description": "Frontier model for complex coding, research, and real-world work.",
+      "context_length": 272000,
+      "max_completion_tokens": 128000,
+      "supported_parameters": [
+        "tools"
+      ],
+      "additional_speed_tiers": [
+        "fast"
+      ],
+      "thinking": {
+        "levels": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      }
     }
   ],
   "codex-team": [
@@ -1436,6 +1462,9 @@
       "max_completion_tokens": 128000,
       "supported_parameters": [
         "tools"
+      ],
+      "additional_speed_tiers": [
+        "fast"
       ],
       "thinking": {
         "levels": [
@@ -1607,6 +1636,9 @@
       "supported_parameters": [
         "tools"
       ],
+      "additional_speed_tiers": [
+        "fast"
+      ],
       "thinking": {
         "levels": [
           "low",
@@ -1776,6 +1808,9 @@
       "max_completion_tokens": 128000,
       "supported_parameters": [
         "tools"
+      ],
+      "additional_speed_tiers": [
+        "fast"
       ],
       "thinking": {
         "levels": [
