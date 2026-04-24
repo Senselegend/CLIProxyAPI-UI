@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   deriveAccountStatus,
   normalizeActivityEntries,
+  mergeLogsWithCache,
   getVisibleLogs,
   shouldShowOlderLogsControl,
   renderLogs,
@@ -220,6 +221,33 @@ function makeLogs(count) {
     message: `message ${index + 1}`,
   }));
 }
+
+test('visible logs keep fresh request activity instead of stale cached tail rows', () => {
+  resetDashboardStateForTest();
+  setLogVisibleCount(50);
+  setLogsForTest(Array.from({ length: 80 }, (_, index) => ({
+    id: `cached-${index + 1}`,
+    account: `cached-user-${index + 1}`,
+    model: 'gpt-4o',
+    transport: 'http',
+    latency: '10ms',
+    status: 'success',
+    time: '2h ago',
+    message: `cached message ${index + 1}`,
+  })));
+
+  const merged = mergeLogsWithCache([
+    { id: 'fresh-1', account: 'fresh-user', model: 'gpt-5.4', transport: 'http', latency: '20ms', status: 'success', time: '2s ago', message: 'fresh message 1' },
+    { id: 'fresh-2', account: 'fresh-user', model: 'gpt-5.4', transport: 'http', latency: '30ms', status: 'success', time: '3s ago', message: 'fresh message 2' },
+  ]);
+
+  const visible = getVisibleLogs(merged, 50);
+
+  assert.equal(visible.length, 50);
+  assert.equal(visible[48].id, 'fresh-1');
+  assert.equal(visible[49].id, 'fresh-2');
+  assert.equal(visible.some(log => log.id === 'cached-31'), false);
+});
 
 test('filterLogs applies filters before visible-window slicing', () => {
   const logs = [
