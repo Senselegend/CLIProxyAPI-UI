@@ -15,6 +15,8 @@ const (
 	quotaFetchTimeout = 10 * time.Second
 )
 
+var whamUsageHTTPClient = &http.Client{Timeout: quotaFetchTimeout}
+
 // WhamUsagePayload represents the JSON response from /wham/usage.
 type WhamUsagePayload struct {
 	PlanType             string            `json:"plan_type,omitempty"`
@@ -63,8 +65,7 @@ func FetchWhamUsage(ctx context.Context, accessToken, accountID string) (*WhamUs
 		req.Header.Set("chatgpt-account-id", accountID)
 	}
 
-	client := &http.Client{Timeout: quotaFetchTimeout}
-	resp, err := client.Do(req)
+	resp, err := whamUsageHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("do request: %w", err)
 	}

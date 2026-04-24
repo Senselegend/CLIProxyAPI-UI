@@ -31,6 +31,10 @@ func NewQuotaRefresher(interval time.Duration) *QuotaRefresher {
 	return &QuotaRefresher{interval: interval}
 }
 
+var quotaRefreshAccountFunc = func(r *QuotaRefresher, account AuthProvider) {
+	r.refreshAccount(account)
+}
+
 func (r *QuotaRefresher) Start(accounts []AuthProvider) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -66,9 +70,10 @@ func (r *QuotaRefresher) Stop() {
 }
 
 func (r *QuotaRefresher) refreshAll(accounts []AuthProvider) {
-	for _, account := range accounts {
-		go r.refreshAccount(account)
-	}
+	_ = runQuotaWork(context.Background(), accounts, defaultQuotaSyncConcurrency, func(_ context.Context, account AuthProvider) error {
+		quotaRefreshAccountFunc(r, account)
+		return nil
+	})
 }
 
 func (r *QuotaRefresher) refreshAccount(account AuthProvider) {

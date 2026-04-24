@@ -1,14 +1,51 @@
 package usage
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestFetchWhamUsageUsesSharedHTTPClientBoundary(t *testing.T) {
+	calls := 0
+	original := whamUsageHTTPClient
+	whamUsageHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		if req.URL.String() != "https://chatgpt.com"+whamUsageURL {
+			t.Fatalf("request URL = %q, want default wham usage URL", req.URL.String())
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer token-1" {
+			t.Fatalf("Authorization header = %q, want bearer token", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"plan_type":"plus"}`)),
+			Request:    req,
+		}, nil
+	})}
+	defer func() { whamUsageHTTPClient = original }()
+
+	payload, err := FetchWhamUsage(context.Background(), "token-1", "")
+	if err != nil {
+		t.Fatalf("FetchWhamUsage() error = %v", err)
+	}
+	if payload.PlanType != "plus" {
+		t.Fatalf("PlanType = %q, want plus", payload.PlanType)
+	}
+	if calls != 1 {
+		t.Fatalf("shared client transport calls = %d, want 1", calls)
+	}
+}
 
 func TestAggregateQuotasIncludesValidZeroUsageWindows(t *testing.T) {
 	quotas := []AccountQuota{
@@ -100,6 +137,87 @@ func TestPayloadToAccountQuotaDistinguishesMissingPrimaryUsedPercentFromExplicit
 	}
 	if zeroValue != 0 {
 		t.Fatalf("mapped explicit zero primary used_percent = %v, want 0", zeroValue)
+	}
+}
+
+func TestRefreshAllProcessesEveryAccountWithDefaultConcurrencyLimit(t *testing.T) {
+	accounts := []AuthProvider{
+		testAuthProvider{id: "account-1"},
+		testAuthProvider{id: "account-2"},
+		testAuthProvider{id: "account-3"},
+		testAuthProvider{id: "account-4"},
+		testAuthProvider{id: "account-5"},
+	}
+	if len(accounts) <= defaultQuotaSyncConcurrency {
+		t.Fatalf("test requires more accounts than default concurrency")
+	}
+
+	original := quotaRefreshAccountFunc
+	started := make(chan string, len(accounts))
+	release := make(chan struct{})
+	processed := make(chan string, len(accounts))
+	done := make(chan struct{})
+	var releaseOnce sync.Once
+	var inFlight int32
+	var maxInFlight int32
+
+	quotaRefreshAccountFunc = func(_ *QuotaRefresher, account AuthProvider) {
+		current := atomic.AddInt32(&inFlight, 1)
+		for {
+			max := atomic.LoadInt32(&maxInFlight)
+			if current <= max || atomic.CompareAndSwapInt32(&maxInFlight, max, current) {
+				break
+			}
+		}
+		started <- account.ID()
+		<-release
+		processed <- account.ID()
+		atomic.AddInt32(&inFlight, -1)
+	}
+	defer func() {
+		quotaRefreshAccountFunc = original
+		releaseOnce.Do(func() { close(release) })
+	}()
+
+	r := NewQuotaRefresher(time.Minute)
+	go func() {
+		r.refreshAll(accounts)
+		close(done)
+	}()
+
+	waitForQuotaRefreshStarts(t, started, defaultQuotaSyncConcurrency)
+
+	select {
+	case id := <-started:
+		t.Fatalf("refreshAll started %s before bounded work was released", id)
+	default:
+	}
+
+	releaseOnce.Do(func() { close(release) })
+
+	seen := make(map[string]bool)
+	for i := 0; i < len(accounts); i++ {
+		select {
+		case id := <-processed:
+			seen[id] = true
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for account %d of %d to be processed", i+1, len(accounts))
+		}
+	}
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for refreshAll to return")
+	}
+
+	if got := atomic.LoadInt32(&maxInFlight); got > defaultQuotaSyncConcurrency {
+		t.Fatalf("max in-flight refreshes = %d, want at most %d", got, defaultQuotaSyncConcurrency)
+	}
+	for _, account := range accounts {
+		if !seen[account.ID()] {
+			t.Fatalf("account %q was not refreshed", account.ID())
+		}
 	}
 }
 
@@ -240,6 +358,12 @@ func TestRefreshAccountTreatsExplicitZeroPrimaryUsageAsValidData(t *testing.T) {
 	}
 }
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
+
 type testAuthProvider struct {
 	id        string
 	token     string
@@ -249,6 +373,20 @@ type testAuthProvider struct {
 func (a testAuthProvider) GetAccessToken() string { return a.token }
 func (a testAuthProvider) GetAccountID() string   { return a.accountID }
 func (a testAuthProvider) ID() string             { return a.id }
+
+func waitForQuotaRefreshStarts(t *testing.T, started <-chan string, count int) {
+	t.Helper()
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+
+	for i := 0; i < count; i++ {
+		select {
+		case <-started:
+		case <-timer.C:
+			t.Fatalf("timed out waiting for quota refresh start %d of %d", i+1, count)
+		}
+	}
+}
 
 func swapQuotaStoreForTest(t *testing.T) *QuotaStore {
 	t.Helper()
