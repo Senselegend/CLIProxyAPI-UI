@@ -38,3 +38,7 @@ func (s *QuotaStore) Snapshot() []AccountQuota {
 }
 
 func GetQuotaStore() *QuotaStore { return defaultQuotaStore }
+
+func SetQuotaStoreForTest(store *QuotaStore) {
+	defaultQuotaStore = store
+}

@@ -199,12 +199,17 @@ func loadQuotaAccounts(ctx context.Context) ([]usage.AuthProvider, error) {
 }
 
 func runQuotaSync(ctx context.Context, accounts []usage.AuthProvider) error {
-	var firstErr error
+	errs := make([]error, len(accounts))
+	accountIndexes := make(map[string]int, len(accounts))
+	for index, account := range accounts {
+		accountIndexes[account.ID()] = index
+	}
 
-	for _, account := range accounts {
+	var errMu sync.Mutex
+	_ = usage.RunQuotaSyncWork(ctx, accounts, func(ctx context.Context, account usage.AuthProvider) error {
 		token := account.GetAccessToken()
 		if token == "" {
-			continue
+			return nil
 		}
 
 		store := usage.GetQuotaStore()
@@ -219,15 +224,23 @@ func runQuotaSync(ctx context.Context, accounts []usage.AuthProvider) error {
 				FetchError: err.Error(),
 			}, prior)
 			store.Set(account.ID(), quota)
-			if firstErr == nil {
-				firstErr = fmt.Errorf("refresh %s: %w", account.ID(), err)
-			}
-			continue
+			refreshErr := fmt.Errorf("refresh %s: %w", account.ID(), err)
+			errMu.Lock()
+			errs[accountIndexes[account.ID()]] = refreshErr
+			errMu.Unlock()
+			return refreshErr
 		}
 
 		store.Set(account.ID(), usage.PreserveQuotaWindows(usage.PayloadToAccountQuota(account.ID(), payload), prior))
+		return nil
+	})
+
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
 	}
-	return firstErr
+	return nil
 }
 
 func startQuotaRefresher(accounts []usage.AuthProvider, forceRestart bool) {
