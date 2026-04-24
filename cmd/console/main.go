@@ -185,7 +185,7 @@ func forwardOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	// Determine API callback path based on the port the callback arrived on
 	host := r.Host
 	portStr := strings.TrimPrefix(host, "localhost:")
-	callbackPort := 18445 // default codex callback port
+	callbackPort := 1455 // default codex callback port
 	if portStr != host {
 		if p, err := strconv.Atoi(portStr); err == nil {
 			callbackPort = p
@@ -197,8 +197,8 @@ func forwardOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	switch callbackPort {
 	case 54545:
 		apiCallbackPath = "/anthropic/callback" // Claude uses 54545
-	case 18445:
-		apiCallbackPath = "/codex/callback" // Codex uses 18445
+	case 1455:
+		apiCallbackPath = "/codex/callback" // Codex uses 1455
 	case 18080:
 		apiCallbackPath = "/google/callback" // Gemini uses 18080
 	case 18081:
@@ -229,7 +229,7 @@ func forwardOAuthCallback(w http.ResponseWriter, r *http.Request) {
 // Start OAuth callback servers on multiple ports
 func startOAuthCallbackServers() {
 	// Ports that different OAuth providers use
-	ports := []int{*oauthCallbackPort, 18445, 54545, 18080, 18081}
+	ports := []int{*oauthCallbackPort, 1455, 54545, 18080, 18081}
 
 	for _, callbackPort := range ports {
 		port := callbackPort

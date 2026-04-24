@@ -1644,13 +1644,18 @@
   let oauthState = null;
   let oauthPopup = null;
 
+  function buildOAuthAuthURLRequest(provider) {
+    const base = '/' + provider + '-auth-url';
+    return provider === 'codex' ? base + '?is_webui=true' : base;
+  }
+
   async function startOAuthFlow() {
     const statusEl = document.getElementById('oauth-status');
     statusEl.style.display = 'block';
     statusEl.className = 'oauth-status pending';
     statusEl.textContent = 'Opening OAuth window...';
 
-    const data = await apiFetch('/' + selectedProvider + '-auth-url');
+    const data = await apiFetch(buildOAuthAuthURLRequest(selectedProvider));
     if (data && data.url) {
       // Open OAuth in a popup window
       const width = 600;
@@ -2445,6 +2450,7 @@
       summaryWindowLabel,
       renderSummaryCards,
       setSummaryWindow,
+      buildOAuthAuthURLRequest,
     };
   }
 

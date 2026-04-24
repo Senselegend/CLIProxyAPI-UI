@@ -45,6 +45,22 @@ func TestRefreshTokensWithRetry_NonRetryableOnlyAttemptsOnce(t *testing.T) {
 	}
 }
 
+func TestGenerateAuthURLUsesRegisteredCodexRedirectURI(t *testing.T) {
+	auth := NewCodexAuth(nil)
+	pkceCodes, err := GeneratePKCECodes()
+	if err != nil {
+		t.Fatalf("GeneratePKCECodes: %v", err)
+	}
+
+	authURL, err := auth.GenerateAuthURL("test-state", pkceCodes)
+	if err != nil {
+		t.Fatalf("GenerateAuthURL: %v", err)
+	}
+	if !strings.Contains(authURL, "redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback") {
+		t.Fatalf("auth URL = %s, want registered Codex redirect URI on port 1455", authURL)
+	}
+}
+
 func TestNewCodexAuthWithProxyURL_OverrideDirectDisablesProxy(t *testing.T) {
 	cfg := &config.Config{SDKConfig: config.SDKConfig{ProxyURL: "http://proxy.example.com:8080"}}
 	auth := NewCodexAuthWithProxyURL(cfg, "direct")

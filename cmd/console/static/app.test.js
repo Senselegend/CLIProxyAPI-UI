@@ -26,6 +26,7 @@ const {
   summaryWindowLabel,
   renderSummaryCards,
   setSummaryWindow,
+  buildOAuthAuthURLRequest,
 } = require('./app.js');
 
 function escapeHtmlForStub(value) {
@@ -719,6 +720,11 @@ test('buildDashboardUsage keeps fresh summary when new snapshot has meaningful v
 
   assert.equal(usage.summary.lifetime.requests, 10);
   assert.equal(usage.summary.today.tokens, 20);
+});
+
+test('buildOAuthAuthURLRequest marks Codex dashboard OAuth as WebUI flow', () => {
+  assert.equal(buildOAuthAuthURLRequest('codex'), '/codex-auth-url?is_webui=true');
+  assert.equal(buildOAuthAuthURLRequest('anthropic'), '/anthropic-auth-url');
 });
 
 test('getInitialSummaryWindow defaults to last_7_days and restores valid saved value', () => {

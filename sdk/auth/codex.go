@@ -24,7 +24,7 @@ type CodexAuthenticator struct {
 
 // NewCodexAuthenticator constructs a Codex authenticator with default settings.
 func NewCodexAuthenticator() *CodexAuthenticator {
-	return &CodexAuthenticator{CallbackPort: 18445}
+	return &CodexAuthenticator{CallbackPort: 1455}
 }
 
 func (a *CodexAuthenticator) Provider() string {
