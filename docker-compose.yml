@@ -26,7 +26,9 @@ services:
     volumes:
       - ${CLI_PROXY_CONFIG_PATH:-./config.yaml}:/CLIProxyAPI/config.yaml
       - ${CLI_PROXY_AUTH_PATH:-./auths}:${CLI_PROXY_AUTH_CONTAINER_PATH:-/root/.cli-proxy-api}
-      - ${CLI_PROXY_AUTH_PATH:-./auths}:${CLI_PROXY_AUTHDIR_MIRROR_PATH:-/Users/s-karagezyan/.cli-proxy-api}
+      - ${CLI_PROXY_AUTH_PATH:-./auths}:${CLI_PROXY_AUTHDIR_MIRROR_PATH:-/root/.cli-proxy-api}
+      - ${CLI_PROXY_USAGE_PATH:-${CLI_PROXY_AUTH_PATH:-./auths}.usage}:${CLI_PROXY_USAGE_CONTAINER_PATH:-${CLI_PROXY_AUTH_CONTAINER_PATH:-/root/.cli-proxy-api}.usage}
+      - ${CLI_PROXY_USAGE_PATH:-${CLI_PROXY_AUTH_PATH:-./auths}.usage}:${CLI_PROXY_AUTHDIR_MIRROR_PATH:-/root/.cli-proxy-api}.usage
       - ${CLI_PROXY_LOG_PATH:-./logs}:/CLIProxyAPI/logs
     restart: unless-stopped
 
