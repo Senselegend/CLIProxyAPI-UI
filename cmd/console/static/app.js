@@ -1900,14 +1900,15 @@
     const merged = [];
     const seen = new Set();
     const cached = Array.isArray(state.logs) ? state.logs : [];
-    for (const log of [...logs, ...cached]) {
+    const freshIds = new Set(logs.filter(log => log && log.id).map(log => log.id));
+    for (const log of [...cached, ...logs]) {
       if (!log || !log.id) continue;
       if (seen.has(log.id)) continue;
+      if (freshIds.has(log.id) && !logs.includes(log)) continue;
       seen.add(log.id);
       merged.push(log);
-      if (merged.length >= LOGS_CACHE_LIMIT) break;
     }
-    return merged;
+    return merged.slice(-LOGS_CACHE_LIMIT);
   }
 
   // Load logs
@@ -2428,6 +2429,7 @@
     module.exports = {
       deriveAccountStatus,
       normalizeActivityEntries,
+      mergeLogsWithCache,
       getVisibleLogs,
       shouldShowOlderLogsControl,
       renderLogs,
