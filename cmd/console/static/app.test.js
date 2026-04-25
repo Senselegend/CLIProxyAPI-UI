@@ -28,6 +28,7 @@ const {
   renderSummaryCards,
   setSummaryWindow,
   buildOAuthAuthURLRequest,
+  startLiveRefreshForTest,
 } = require('./app.js');
 
 function escapeHtmlForStub(value) {
@@ -1055,6 +1056,45 @@ test('handleRefresh ignores concurrent clicks while refresh is in flight', async
     delete global.fetch;
     delete global.document;
     global.setTimeout = originalSetTimeout;
+  }
+});
+
+test('live refresh reloads accounts while dashboard stays open', async () => {
+  const originalSetInterval = global.setInterval;
+  const originalClearInterval = global.clearInterval;
+  const calls = [];
+  let intervalHandler;
+  let intervalDelay;
+  resetDashboardStateForTest();
+  global.document = createDocumentStub();
+  global.setInterval = (fn, delay) => {
+    intervalHandler = fn;
+    intervalDelay = delay;
+    return 42;
+  };
+  global.clearInterval = () => {};
+  global.fetch = async (url, options = {}) => {
+    const currentUrl = String(url);
+    calls.push({ url: currentUrl, method: options.method || 'GET' });
+    if (currentUrl.includes('/auth-files')) return { ok: true, json: async () => ({ files: [] }) };
+    if (currentUrl.includes('/quotas')) return { ok: true, json: async () => ({ quotas: [] }) };
+    throw new Error(`unexpected url ${url}`);
+  };
+
+  try {
+    startLiveRefreshForTest();
+    assert.equal(typeof intervalHandler, 'function');
+    assert.equal(intervalDelay, 60000);
+
+    await intervalHandler();
+
+    assert.equal(calls.some(call => call.url.includes('/auth-files')), true);
+    assert.equal(calls.some(call => call.url.includes('/quotas')), true);
+  } finally {
+    delete global.fetch;
+    delete global.document;
+    global.setInterval = originalSetInterval;
+    global.clearInterval = originalClearInterval;
   }
 });
 

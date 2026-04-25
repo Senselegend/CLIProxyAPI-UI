@@ -10,6 +10,7 @@
   const RECOVERY_POLL_ATTEMPTS = 4;
   const RECOVERY_POLL_DELAY_MS = 1500;
   const HARD_REFRESH_DOUBLE_CLICK_WINDOW_MS = 1500;
+  const LIVE_REFRESH_INTERVAL_MS = 60000;
   const DEFAULT_SUMMARY_WINDOW = 'last_7_days';
   const SUMMARY_WINDOWS = new Set(['today', 'last_7_days', 'last_30_days']);
 
@@ -37,6 +38,8 @@
   };
   let detailCountdownTimer = null;
   let startupSyncPollTimer = null;
+  let liveRefreshTimer = null;
+  let liveRefreshInFlight = false;
   let refreshInFlight = false;
   let lastRefreshCompletedAt = 0;
   let lastLogsFilterSignature = '';
@@ -90,6 +93,7 @@
     loadApiKey();
     showLoadingState();
     ensureDetailCountdownTimer();
+    startLiveRefresh();
 
     // Check for OAuth callback
     const params = new URLSearchParams(window.location.search);
@@ -1066,6 +1070,19 @@
         selectAccount(selectedAccountId);
       }
     }, 60000);
+  }
+
+  function startLiveRefresh() {
+    if (liveRefreshTimer) return;
+    liveRefreshTimer = setInterval(async () => {
+      if (liveRefreshInFlight || refreshInFlight) return;
+      liveRefreshInFlight = true;
+      try {
+        await loadAccounts();
+      } finally {
+        liveRefreshInFlight = false;
+      }
+    }, LIVE_REFRESH_INTERVAL_MS);
   }
 
   function updateStartupSyncPolling() {
@@ -2416,6 +2433,15 @@
   function resetDashboardStateForTest() {
     refreshInFlight = false;
     lastRefreshCompletedAt = 0;
+    liveRefreshInFlight = false;
+    if (liveRefreshTimer) {
+      clearInterval(liveRefreshTimer);
+      liveRefreshTimer = null;
+    }
+    if (startupSyncPollTimer) {
+      clearInterval(startupSyncPollTimer);
+      startupSyncPollTimer = null;
+    }
     state.quotaStartupSync = null;
     state.quotaSummary = null;
     state.accounts = [];
@@ -2453,6 +2479,7 @@
       renderSummaryCards,
       setSummaryWindow,
       buildOAuthAuthURLRequest,
+      startLiveRefreshForTest: startLiveRefresh,
     };
   }
 
