@@ -131,6 +131,75 @@ func TestFillFirstSelectorPick_AllowsTransientQuotaFetchError(t *testing.T) {
 	}
 }
 
+func TestFillFirstSelectorPick_AllowsHealthyQuotaDespiteStaleRateLimitedStatus(t *testing.T) {
+	store := usage.NewQuotaStore()
+	usage.SetQuotaStoreForTest(store)
+	t.Cleanup(func() {
+		usage.SetQuotaStoreForTest(usage.NewQuotaStore())
+	})
+
+	usedPercent := 0.0
+	store.Set("a", &usage.AccountQuota{
+		AccountID: "a",
+		SecondaryWindow: &usage.QuotaWindow{
+			UsedPercent: &usedPercent,
+			ResetAt:     time.Now().Add(time.Hour).Unix(),
+		},
+	})
+
+	selector := &FillFirstSelector{}
+	auths := []*Auth{
+		{ID: "a", Status: StatusRateLimited},
+		{ID: "b"},
+	}
+
+	got, err := selector.Pick(context.Background(), "codex", "", cliproxyexecutor.Options{}, auths)
+	if err != nil {
+		t.Fatalf("Pick() error = %v", err)
+	}
+	if got == nil {
+		t.Fatalf("Pick() auth = nil")
+	}
+	if got.ID != "a" {
+		t.Fatalf("Pick() auth.ID = %q, want %q", got.ID, "a")
+	}
+}
+
+func TestFillFirstSelectorPick_DoesNotAllowStaleRateLimitedStatusWithTransientQuotaFetchError(t *testing.T) {
+	store := usage.NewQuotaStore()
+	usage.SetQuotaStoreForTest(store)
+	t.Cleanup(func() {
+		usage.SetQuotaStoreForTest(usage.NewQuotaStore())
+	})
+
+	usedPercent := 0.0
+	store.Set("a", &usage.AccountQuota{
+		AccountID:  "a",
+		FetchError: "HTTP 503: upstream unavailable",
+		SecondaryWindow: &usage.QuotaWindow{
+			UsedPercent: &usedPercent,
+			ResetAt:     time.Now().Add(time.Hour).Unix(),
+		},
+	})
+
+	selector := &FillFirstSelector{}
+	auths := []*Auth{
+		{ID: "a", Status: StatusRateLimited},
+		{ID: "b"},
+	}
+
+	got, err := selector.Pick(context.Background(), "codex", "", cliproxyexecutor.Options{}, auths)
+	if err != nil {
+		t.Fatalf("Pick() error = %v", err)
+	}
+	if got == nil {
+		t.Fatalf("Pick() auth = nil")
+	}
+	if got.ID != "b" {
+		t.Fatalf("Pick() auth.ID = %q, want %q", got.ID, "b")
+	}
+}
+
 func TestRoundRobinSelectorPick_CyclesDeterministic(t *testing.T) {
 	t.Parallel()
 

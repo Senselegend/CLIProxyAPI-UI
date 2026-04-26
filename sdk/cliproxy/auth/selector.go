@@ -202,9 +202,13 @@ func collectAvailableByPriority(auths []*Auth, provider, model string, now time.
 	available = make(map[int][]*Auth)
 	for i := 0; i < len(auths); i++ {
 		candidate := auths[i]
+		quotaHealthy, quotaBlocked, quotaReason, quotaNext := quotaStoreStatus(candidate, provider, now)
 		blocked, reason, next := isAuthBlockedForModel(candidate, model, now)
-		if !blocked {
-			blocked, reason, next = isAuthBlockedByQuotaStore(candidate, provider, now)
+		if quotaHealthy && candidate != nil && candidate.Status == StatusRateLimited {
+			blocked, reason, next = false, blockReasonNone, time.Time{}
+		}
+		if quotaBlocked {
+			blocked, reason, next = quotaBlocked, quotaReason, quotaNext
 		}
 		if !blocked {
 			priority := authPriority(candidate)
@@ -380,28 +384,34 @@ func isPermanentQuotaFetchError(fetchError string) bool {
 		strings.Contains(fetchError, "revoked token")
 }
 
-func isAuthBlockedByQuotaStore(auth *Auth, provider string, now time.Time) (bool, blockReason, time.Time) {
+func quotaStoreStatus(auth *Auth, provider string, now time.Time) (bool, bool, blockReason, time.Time) {
 	if auth == nil {
-		return true, blockReasonOther, time.Time{}
+		return false, true, blockReasonOther, time.Time{}
 	}
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	if provider != "codex" && provider != "openai" {
-		return false, blockReasonNone, time.Time{}
+		return false, false, blockReasonNone, time.Time{}
 	}
 	quota := usage.GetQuotaStore().Get(auth.ID)
 	if quota == nil {
-		return false, blockReasonNone, time.Time{}
+		return false, false, blockReasonNone, time.Time{}
 	}
 	if isPermanentQuotaFetchError(quota.FetchError) {
-		return true, blockReasonOther, time.Time{}
+		return false, true, blockReasonOther, time.Time{}
 	}
+	hasFetchError := strings.TrimSpace(quota.FetchError) != ""
 	if quota.SecondaryWindow == nil || quota.SecondaryWindow.UsedPercent == nil {
-		return false, blockReasonNone, time.Time{}
+		return false, false, blockReasonNone, time.Time{}
 	}
-	if *quota.SecondaryWindow.UsedPercent < 100 || quota.SecondaryWindow.ResetAt <= now.Unix() {
-		return false, blockReasonNone, time.Time{}
+	if *quota.SecondaryWindow.UsedPercent >= 100 && quota.SecondaryWindow.ResetAt > now.Unix() {
+		return false, true, blockReasonCooldown, time.Unix(quota.SecondaryWindow.ResetAt, 0)
 	}
-	return true, blockReasonCooldown, time.Unix(quota.SecondaryWindow.ResetAt, 0)
+	return !hasFetchError, false, blockReasonNone, time.Time{}
+}
+
+func isAuthBlockedByQuotaStore(auth *Auth, provider string, now time.Time) (bool, blockReason, time.Time) {
+	_, blocked, reason, next := quotaStoreStatus(auth, provider, now)
+	return blocked, reason, next
 }
 
 func isAuthBlockedForModel(auth *Auth, model string, now time.Time) (bool, blockReason, time.Time) {
