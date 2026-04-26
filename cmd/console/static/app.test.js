@@ -561,6 +561,46 @@ test('deriveAccountStatus does not map transient quota fetch errors to deactivat
   assert.deepEqual(status, { key: 'error', label: 'error' });
 });
 
+test('deriveAccountStatus treats fresh healthy quotas as active despite stale backend error', () => {
+  const status = deriveAccountStatus(
+    {
+      status: 'error',
+      status_message: 'Method Not Allowed',
+    },
+    {
+      primary_window: {
+        used_percent: 0,
+        reset_at: Math.floor((Date.now() + 60_000) / 1000),
+      },
+      secondary_window: {
+        used_percent: 64,
+        reset_at: Math.floor((Date.now() + 60_000) / 1000),
+      },
+    },
+  );
+  assert.deepEqual(status, { key: 'active', label: 'active' });
+});
+
+test('deriveAccountStatus treats fresh healthy quotas as active despite stale backend rate limit', () => {
+  const status = deriveAccountStatus(
+    {
+      status: 'rate_limited',
+      status_message: 'usage_limit_reached',
+    },
+    {
+      primary_window: {
+        used_percent: 0,
+        reset_at: Math.floor((Date.now() + 60_000) / 1000),
+      },
+      secondary_window: {
+        used_percent: 64,
+        reset_at: Math.floor((Date.now() + 60_000) / 1000),
+      },
+    },
+  );
+  assert.deepEqual(status, { key: 'active', label: 'active' });
+});
+
 test('normalizeActivityEntries hides request activity entries without accounts', () => {
   const rows = normalizeActivityEntries({
     entries: [

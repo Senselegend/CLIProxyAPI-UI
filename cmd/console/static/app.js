@@ -974,6 +974,13 @@
       || fetchError.includes('revoked token');
   }
 
+  function hasHealthyQuotaWindows(quota) {
+    if (!quota || String(quota.fetch_error || '').trim() !== '') return false;
+    const windows = [quota.primary_window, quota.secondary_window].filter(Boolean);
+    if (windows.length === 0) return false;
+    return windows.every(window => !hasQuotaCooldown(window));
+  }
+
   function getRecoveryAccountStatus(file) {
     const recovery = file?.recovery || {};
     if (recovery.in_flight) {
@@ -1005,6 +1012,9 @@
     if (backendStatus === 'deactivated') {
       return { key: 'deactivated', label: 'deactivated' };
     }
+    if (hasHealthyQuotaWindows(quota)) {
+      return { key: 'active', label: 'active' };
+    }
     if (backendStatus === 'rate_limited') {
       return { key: 'rate_limited', label: 'rate limited' };
     }
@@ -1030,6 +1040,9 @@
 
     if (hasQuotaCooldown(quota?.primary_window) || hasQuotaCooldown(quota?.secondary_window)) {
       return { key: 'rate_limited', label: 'rate limited' };
+    }
+    if (backendStatus === 'error' && hasHealthyQuotaWindows(quota)) {
+      return { key: 'active', label: 'active' };
     }
 
     if (backendStatus === 'error') {
