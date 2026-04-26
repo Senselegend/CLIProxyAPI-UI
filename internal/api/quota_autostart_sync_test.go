@@ -142,6 +142,105 @@ func TestTriggerQuotaRecoveryMarksMissingRuntimeOnlyWhenTokenStoreUnavailable(t 
 	}
 }
 
+func TestRunInitialQuotaSyncStartsRefresherWhenSomeAccountsFail(t *testing.T) {
+	resetQuotaAutostartTestState(t)
+	withIsolatedQuotaStore(t)
+
+	accounts := []usage.AuthProvider{
+		stubQuotaAuthProvider{id: "auth-error", token: "token-error", accountID: "acct-error"},
+		stubQuotaAuthProvider{id: "auth-success", token: "token-success", accountID: "acct-success"},
+	}
+	loadQuotaAccountsFunc = func(context.Context) ([]usage.AuthProvider, error) {
+		return accounts, nil
+	}
+	runQuotaSyncFunc = func(context.Context, []usage.AuthProvider) error {
+		usage.GetQuotaStore().Set("auth-success", &usage.AccountQuota{AccountID: "auth-success", FetchedAt: time.Now()})
+		return fmt.Errorf("refresh auth-error: token invalidated")
+	}
+
+	started := 0
+	startQuotaRefresherFunc = func(got []usage.AuthProvider) *usage.QuotaRefresher {
+		started++
+		if len(got) != len(accounts) {
+			t.Fatalf("startQuotaRefresherFunc accounts = %#v, want all accounts", got)
+		}
+		return usage.NewQuotaRefresher(time.Minute)
+	}
+
+	if err := RunInitialQuotaSync(context.Background()); err != nil {
+		t.Fatalf("RunInitialQuotaSync() error = %v, want nil", err)
+	}
+	if state := GetQuotaStartupState(); state != startupStateReady {
+		t.Fatalf("GetQuotaStartupState() = %q, want %q", state, startupStateReady)
+	}
+	if started != 1 {
+		t.Fatalf("startQuotaRefresherFunc called %d times, want 1", started)
+	}
+}
+
+func TestRunInitialQuotaSyncReturnsErrorWhenAllAccountsFail(t *testing.T) {
+	resetQuotaAutostartTestState(t)
+	withIsolatedQuotaStore(t)
+
+	accounts := []usage.AuthProvider{
+		stubQuotaAuthProvider{id: "auth-error", token: "token-error", accountID: "acct-error"},
+	}
+	loadQuotaAccountsFunc = func(context.Context) ([]usage.AuthProvider, error) {
+		return accounts, nil
+	}
+	runQuotaSyncFunc = func(context.Context, []usage.AuthProvider) error {
+		return fmt.Errorf("refresh auth-error: token invalidated")
+	}
+
+	started := 0
+	startQuotaRefresherFunc = func([]usage.AuthProvider) *usage.QuotaRefresher {
+		started++
+		return usage.NewQuotaRefresher(time.Minute)
+	}
+
+	if err := RunInitialQuotaSync(context.Background()); err == nil {
+		t.Fatalf("RunInitialQuotaSync() error = nil, want error")
+	}
+	if state := GetQuotaStartupState(); state != startupStateError {
+		t.Fatalf("GetQuotaStartupState() = %q, want %q", state, startupStateError)
+	}
+	if started != 0 {
+		t.Fatalf("startQuotaRefresherFunc called %d times, want 0", started)
+	}
+}
+
+func TestRunInitialQuotaSyncIgnoresStaleQuotaWhenAllAccountsFail(t *testing.T) {
+	resetQuotaAutostartTestState(t)
+	withIsolatedQuotaStore(t)
+
+	accounts := []usage.AuthProvider{
+		stubQuotaAuthProvider{id: "auth-error", token: "token-error", accountID: "acct-error"},
+	}
+	usage.GetQuotaStore().Set("auth-error", &usage.AccountQuota{AccountID: "auth-error", FetchedAt: time.Now().Add(-time.Hour)})
+	loadQuotaAccountsFunc = func(context.Context) ([]usage.AuthProvider, error) {
+		return accounts, nil
+	}
+	runQuotaSyncFunc = func(context.Context, []usage.AuthProvider) error {
+		return fmt.Errorf("refresh auth-error: token invalidated")
+	}
+
+	started := 0
+	startQuotaRefresherFunc = func([]usage.AuthProvider) *usage.QuotaRefresher {
+		started++
+		return usage.NewQuotaRefresher(time.Minute)
+	}
+
+	if err := RunInitialQuotaSync(context.Background()); err == nil {
+		t.Fatalf("RunInitialQuotaSync() error = nil, want error")
+	}
+	if state := GetQuotaStartupState(); state != startupStateError {
+		t.Fatalf("GetQuotaStartupState() = %q, want %q", state, startupStateError)
+	}
+	if started != 0 {
+		t.Fatalf("startQuotaRefresherFunc called %d times, want 0", started)
+	}
+}
+
 func TestRunQuotaSyncProcessesAllAccountsAndReturnsFirstError(t *testing.T) {
 	resetQuotaAutostartTestState(t)
 	withIsolatedQuotaStore(t)

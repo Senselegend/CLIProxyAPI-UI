@@ -883,9 +883,16 @@
   function computeQuotaSummaryFromQuotas(quotas) {
     const quotaList = Array.isArray(quotas) ? quotas : [];
 
-    function computeWindowAverage(windowKey) {
+    function computeWindowAverage(windowKey, mapQuota) {
       const values = quotaList
         .map(quota => {
+          if (typeof mapQuota === 'function') {
+            const mapped = mapQuota(quota);
+            if (mapped != null) {
+              const mappedValue = Number(mapped);
+              return Number.isFinite(mappedValue) ? mappedValue : null;
+            }
+          }
           const window = quota && quota[windowKey];
           if (!window || window.used_percent == null) {
             return null;
@@ -903,8 +910,19 @@
       return Math.max(0, Math.min(100, Math.round(average)));
     }
 
+    function hasActiveExhaustedLongWindow(quota) {
+      const window = quota && quota.secondary_window;
+      const usedPercent = Number(window?.used_percent);
+      const resetAt = Number(window?.reset_at);
+      return Number.isFinite(usedPercent)
+        && usedPercent >= 100
+        && Number.isFinite(resetAt)
+        && resetAt > 0
+        && resetAt * 1000 > Date.now();
+    }
+
     return {
-      primary_used_percent: computeWindowAverage('primary_window'),
+      primary_used_percent: computeWindowAverage('primary_window', quota => (hasActiveExhaustedLongWindow(quota) ? 100 : null)),
       secondary_used_percent: computeWindowAverage('secondary_window')
     };
   }
@@ -941,6 +959,21 @@
     return { key: 'syncing', label: 'syncing' };
   }
 
+  function hasRateLimitStatusMessage(statusMessage) {
+    return /\busage_limit(?:_reached)?\b/.test(statusMessage)
+      || /\busage limit\b/.test(statusMessage)
+      || /\brate[-_ ]?limit(?:ed)?\b/.test(statusMessage)
+      || /\bquota\b/.test(statusMessage);
+  }
+
+  function hasPermanentQuotaFetchError(quota) {
+    const fetchError = String(quota?.fetch_error || '').trim().toLowerCase();
+    return fetchError.includes('token_invalidated')
+      || fetchError.includes('token invalidated')
+      || fetchError.includes('authentication token has been invalidated')
+      || fetchError.includes('revoked token');
+  }
+
   function getRecoveryAccountStatus(file) {
     const recovery = file?.recovery || {};
     if (recovery.in_flight) {
@@ -952,7 +985,7 @@
     }
 
     const statusMessage = String(file?.status_message || '').trim().toLowerCase();
-    if (statusMessage.includes('quota') || statusMessage.includes('rate')) {
+    if (hasRateLimitStatusMessage(statusMessage)) {
       return { key: 'rate_limited', label: 'rate limited' };
     }
 
@@ -973,6 +1006,15 @@
       return { key: 'deactivated', label: 'deactivated' };
     }
     if (backendStatus === 'rate_limited') {
+      return { key: 'rate_limited', label: 'rate limited' };
+    }
+    if (hasPermanentQuotaFetchError(quota)) {
+      return { key: 'deactivated', label: 'deactivated' };
+    }
+    if (String(quota?.fetch_error || '').trim() !== '') {
+      return { key: 'error', label: 'error' };
+    }
+    if (hasRateLimitStatusMessage(statusMessage)) {
       return { key: 'rate_limited', label: 'rate limited' };
     }
 

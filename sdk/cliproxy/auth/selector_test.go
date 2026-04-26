@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/executor"
 )
 
@@ -25,6 +26,100 @@ func TestFillFirstSelectorPick_Deterministic(t *testing.T) {
 	}
 
 	got, err := selector.Pick(context.Background(), "gemini", "", cliproxyexecutor.Options{}, auths)
+	if err != nil {
+		t.Fatalf("Pick() error = %v", err)
+	}
+	if got == nil {
+		t.Fatalf("Pick() auth = nil")
+	}
+	if got.ID != "a" {
+		t.Fatalf("Pick() auth.ID = %q, want %q", got.ID, "a")
+	}
+}
+
+func TestFillFirstSelectorPick_SkipsActiveLongWindowQuotaExhaustion(t *testing.T) {
+	store := usage.NewQuotaStore()
+	usage.SetQuotaStoreForTest(store)
+	t.Cleanup(func() {
+		usage.SetQuotaStoreForTest(usage.NewQuotaStore())
+	})
+
+	usedPercent := 100.0
+	store.Set("a", &usage.AccountQuota{
+		AccountID: "a",
+		SecondaryWindow: &usage.QuotaWindow{
+			UsedPercent: &usedPercent,
+			ResetAt:     time.Now().Add(time.Hour).Unix(),
+		},
+	})
+
+	selector := &FillFirstSelector{}
+	auths := []*Auth{
+		{ID: "a"},
+		{ID: "b"},
+	}
+
+	got, err := selector.Pick(context.Background(), "codex", "", cliproxyexecutor.Options{}, auths)
+	if err != nil {
+		t.Fatalf("Pick() error = %v", err)
+	}
+	if got == nil {
+		t.Fatalf("Pick() auth = nil")
+	}
+	if got.ID != "b" {
+		t.Fatalf("Pick() auth.ID = %q, want %q", got.ID, "b")
+	}
+}
+
+func TestFillFirstSelectorPick_SkipsPermanentQuotaFetchError(t *testing.T) {
+	store := usage.NewQuotaStore()
+	usage.SetQuotaStoreForTest(store)
+	t.Cleanup(func() {
+		usage.SetQuotaStoreForTest(usage.NewQuotaStore())
+	})
+
+	store.Set("a", &usage.AccountQuota{
+		AccountID:  "a",
+		FetchError: "HTTP 401: authentication token has been invalidated",
+	})
+
+	selector := &FillFirstSelector{}
+	auths := []*Auth{
+		{ID: "a"},
+		{ID: "b"},
+	}
+
+	got, err := selector.Pick(context.Background(), "codex", "", cliproxyexecutor.Options{}, auths)
+	if err != nil {
+		t.Fatalf("Pick() error = %v", err)
+	}
+	if got == nil {
+		t.Fatalf("Pick() auth = nil")
+	}
+	if got.ID != "b" {
+		t.Fatalf("Pick() auth.ID = %q, want %q", got.ID, "b")
+	}
+}
+
+func TestFillFirstSelectorPick_AllowsTransientQuotaFetchError(t *testing.T) {
+	store := usage.NewQuotaStore()
+	usage.SetQuotaStoreForTest(store)
+	t.Cleanup(func() {
+		usage.SetQuotaStoreForTest(usage.NewQuotaStore())
+	})
+
+	store.Set("a", &usage.AccountQuota{
+		AccountID:  "a",
+		FetchError: "HTTP 503: upstream unavailable",
+	})
+
+	selector := &FillFirstSelector{}
+	auths := []*Auth{
+		{ID: "a"},
+		{ID: "b"},
+	}
+
+	got, err := selector.Pick(context.Background(), "codex", "", cliproxyexecutor.Options{}, auths)
 	if err != nil {
 		t.Fatalf("Pick() error = %v", err)
 	}
@@ -281,6 +376,50 @@ func TestSelectorPick_AllCooldownReturnsModelCooldownError(t *testing.T) {
 			t.Fatalf("Error().error.provider = %q, want %q", got, "gemini")
 		}
 	})
+}
+
+func TestIsAuthBlockedForModel_BlocksDeactivatedAndRateLimitedStatuses(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	for _, status := range []Status{StatusDeactivated, StatusRateLimited} {
+		auth := &Auth{ID: string(status), Status: status}
+		blocked, reason, next := isAuthBlockedForModel(auth, "", now)
+		if !blocked {
+			t.Fatalf("status %q blocked = false, want true", status)
+		}
+		if reason != blockReasonOther {
+			t.Fatalf("status %q reason = %v, want %v", status, reason, blockReasonOther)
+		}
+		if !next.IsZero() {
+			t.Fatalf("status %q next = %v, want zero", status, next)
+		}
+	}
+}
+
+func TestIsAuthBlockedForModel_BlocksAuthQuotaCooldownWithoutUnavailable(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	next := now.Add(time.Minute)
+	auth := &Auth{
+		ID: "quota-exhausted",
+		Quota: QuotaState{
+			Exceeded:      true,
+			NextRecoverAt: next,
+		},
+	}
+
+	blocked, reason, gotNext := isAuthBlockedForModel(auth, "", now)
+	if !blocked {
+		t.Fatalf("blocked = false, want true")
+	}
+	if reason != blockReasonCooldown {
+		t.Fatalf("reason = %v, want %v", reason, blockReasonCooldown)
+	}
+	if !gotNext.Equal(next) {
+		t.Fatalf("next = %v, want %v", gotNext, next)
+	}
 }
 
 func TestIsAuthBlockedForModel_UnavailableWithoutNextRetryIsNotBlocked(t *testing.T) {

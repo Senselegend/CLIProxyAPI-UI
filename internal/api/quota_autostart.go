@@ -155,21 +155,44 @@ func runQuotaRecovery(ctx context.Context, forceRestartRefresher bool) (QuotaRec
 		}, fmt.Errorf("load quota accounts: %w", err)
 	}
 
+	syncStartedAt := time.Now()
+	var syncErr error
 	if err := runQuotaSyncFunc(ctx, accounts); err != nil {
-		msg := fmt.Sprintf("run quota sync: %v", err)
+		syncErr = err
+		log.Printf("quota refresher: initial sync had errors: %v", err)
+	}
+
+	if syncErr != nil && !hasSyncedQuota(accounts, syncStartedAt) {
+		msg := fmt.Sprintf("run quota sync: %v", syncErr)
 		setQuotaStartupState(startupStateError, msg)
 		return QuotaRecoveryTriggerResult{
 			Triggered:    true,
 			StartupState: GetQuotaStartupState(),
-		}, fmt.Errorf("run quota sync: %w", err)
+		}, fmt.Errorf("run quota sync: %w", syncErr)
 	}
 
 	startQuotaRefresher(accounts, forceRestartRefresher)
 	setQuotaStartupState(startupStateReady, "")
+	if syncErr != nil {
+		setQuotaStartupState(startupStateReady, fmt.Sprintf("initial sync had errors: %v", syncErr))
+	}
 	return QuotaRecoveryTriggerResult{
 		Triggered:    true,
 		StartupState: GetQuotaStartupState(),
 	}, nil
+}
+
+func hasSyncedQuota(accounts []usage.AuthProvider, syncStartedAt time.Time) bool {
+	store := usage.GetQuotaStore()
+	for _, account := range accounts {
+		if account == nil {
+			continue
+		}
+		if quota := store.Get(account.ID()); quota != nil && !quota.FetchedAt.IsZero() && !quota.FetchedAt.Before(syncStartedAt) {
+			return true
+		}
+	}
+	return false
 }
 
 func loadQuotaAccounts(ctx context.Context) ([]usage.AuthProvider, error) {

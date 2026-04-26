@@ -497,6 +497,70 @@ test('deriveAccountStatus preserves backend rate-limited status even without quo
   assert.deepEqual(status, { key: 'rate_limited', label: 'rate limited' });
 });
 
+test('deriveAccountStatus maps usage limit errors to rate limited without retry metadata', () => {
+  const status = deriveAccountStatus(
+    {
+      status: 'error',
+      status_message: '{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached"}}',
+    },
+    null,
+  );
+  assert.deepEqual(status, { key: 'rate_limited', label: 'rate limited' });
+});
+
+test('deriveAccountStatus does not treat unrelated words containing rate as rate limited', () => {
+  const status = deriveAccountStatus(
+    {
+      status: 'error',
+      status_message: 'failed to generate response',
+    },
+    null,
+  );
+  assert.deepEqual(status, { key: 'error', label: 'error' });
+});
+
+test('deriveAccountStatus maps exhausted quota windows to rate limited before backend error', () => {
+  const status = deriveAccountStatus(
+    {
+      status: 'error',
+      status_message: 'unexpected EOF',
+    },
+    {
+      secondary_window: {
+        used_percent: 100,
+        reset_at: Math.floor((Date.now() + 60_000) / 1000),
+      },
+    },
+  );
+  assert.deepEqual(status, { key: 'rate_limited', label: 'rate limited' });
+});
+
+test('deriveAccountStatus maps permanent quota fetch errors to deactivated', () => {
+  const status = deriveAccountStatus(
+    {
+      status: 'active',
+      status_message: '',
+    },
+    {
+      fetch_error: 'HTTP 401: authentication token has been invalidated',
+    },
+  );
+  assert.deepEqual(status, { key: 'deactivated', label: 'deactivated' });
+});
+
+test('deriveAccountStatus does not map transient quota fetch errors to deactivated', () => {
+  const status = deriveAccountStatus(
+    {
+      status: 'active',
+      status_message: '',
+    },
+    {
+      fetch_error: 'HTTP 503: upstream unavailable',
+    },
+  );
+  assert.deepEqual(status, { key: 'error', label: 'error' });
+});
+
 test('normalizeActivityEntries hides request activity entries without accounts', () => {
   const rows = normalizeActivityEntries({
     entries: [
@@ -569,6 +633,23 @@ test('computeQuotaSummaryFromQuotas preserves explicit zero usage values', () =>
   assert.deepEqual(summary, {
     primary_used_percent: 0,
     secondary_used_percent: 0,
+  });
+});
+
+test('computeQuotaSummaryFromQuotas treats active exhausted long window as primary blocked', () => {
+  const summary = computeQuotaSummaryFromQuotas([
+    {
+      primary_window: { used_percent: 0 },
+      secondary_window: {
+        used_percent: 100,
+        reset_at: Math.floor((Date.now() + 60_000) / 1000),
+      },
+    },
+  ]);
+
+  assert.deepEqual(summary, {
+    primary_used_percent: 100,
+    secondary_used_percent: 100,
   });
 });
 
