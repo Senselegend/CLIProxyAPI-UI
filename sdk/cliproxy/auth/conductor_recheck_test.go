@@ -725,9 +725,9 @@ func TestAuthRecheckProbeRequestURL_UsesProviderSpecificEndpoint(t *testing.T) {
 		want string
 	}{
 		{
-			name: "codex default responses endpoint",
+			name: "codex has no safe GET probe",
 			auth: &Auth{ID: "auth-codex", Provider: "codex"},
-			want: "https://chatgpt.com/backend-api/codex/responses",
+			want: "",
 		},
 		{
 			name: "openai compat uses configured base url",
@@ -796,12 +796,13 @@ func TestAuthRecheckProbeRequestURL_UsesProviderSpecificEndpoint(t *testing.T) {
 func TestRunAuthRecheck_SuccessClearsTransientError(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 	m.RegisterExecutor(authRecheckTestExecutor{
+		identifier:   "claude",
 		httpResponse: &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))},
 	})
 
 	auth := &Auth{
 		ID:             "auth-1",
-		Provider:       "codex",
+		Provider:       "claude",
 		Status:         StatusError,
 		StatusMessage:  "context canceled",
 		Unavailable:    true,
@@ -842,12 +843,13 @@ func TestRunAuthRecheck_SuccessClearsTransientError(t *testing.T) {
 func TestRunAuthRecheck_SuccessClearsDeactivatedStatus(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 	m.RegisterExecutor(authRecheckTestExecutor{
+		identifier:   "claude",
 		httpResponse: &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))},
 	})
 
 	auth := &Auth{
 		ID:             "auth-1",
-		Provider:       "codex",
+		Provider:       "claude",
 		Status:         StatusDeactivated,
 		StatusMessage:  "revoked token",
 		Unavailable:    true,
@@ -886,12 +888,13 @@ func TestRunAuthRecheck_SyncsSchedulerAfterSuccess(t *testing.T) {
 	ctx := context.Background()
 	m := NewManager(nil, &RoundRobinSelector{}, nil)
 	m.RegisterExecutor(authRecheckTestExecutor{
+		identifier:   "claude",
 		httpResponse: &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))},
 	})
 
 	auth := &Auth{
 		ID:             "auth-1",
-		Provider:       "codex",
+		Provider:       "claude",
 		Status:         StatusError,
 		StatusMessage:  "context canceled",
 		Unavailable:    true,
@@ -902,7 +905,7 @@ func TestRunAuthRecheck_SyncsSchedulerAfterSuccess(t *testing.T) {
 		t.Fatalf("register auth: %v", err)
 	}
 
-	got, errPick := m.scheduler.pickSingle(ctx, "codex", "", cliproxyexecutor.Options{}, nil)
+	got, errPick := m.scheduler.pickSingle(ctx, "claude", "", cliproxyexecutor.Options{}, nil)
 	var authErr *Error
 	if !errors.As(errPick, &authErr) || authErr == nil {
 		t.Fatalf("pickSingle() before recheck error = %v, want auth_unavailable", errPick)
@@ -920,7 +923,7 @@ func TestRunAuthRecheck_SyncsSchedulerAfterSuccess(t *testing.T) {
 
 	m.runAuthRecheck(ctx, auth.ID)
 
-	got, errPick = m.scheduler.pickSingle(ctx, "codex", "", cliproxyexecutor.Options{}, nil)
+	got, errPick = m.scheduler.pickSingle(ctx, "claude", "", cliproxyexecutor.Options{}, nil)
 	if errPick != nil {
 		t.Fatalf("pickSingle() after recheck error = %v", errPick)
 	}
@@ -932,10 +935,11 @@ func TestRunAuthRecheck_SyncsSchedulerAfterSuccess(t *testing.T) {
 func TestRunAuthRecheck_PermanentFailureBecomesDeactivated(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 	m.RegisterExecutor(authRecheckTestExecutor{
-		httpErr: &Error{HTTPStatus: http.StatusUnauthorized, Message: "revoked token"},
+		identifier: "claude",
+		httpErr:    &Error{HTTPStatus: http.StatusUnauthorized, Message: "revoked token"},
 	})
 
-	auth := &Auth{ID: "auth-1", Provider: "codex", Status: StatusError, StatusMessage: "temporary failure", Unavailable: true}
+	auth := &Auth{ID: "auth-1", Provider: "claude", Status: StatusError, StatusMessage: "temporary failure", Unavailable: true}
 	if _, err := m.Register(context.Background(), auth); err != nil {
 		t.Fatalf("register auth: %v", err)
 	}
@@ -961,10 +965,11 @@ func TestRunAuthRecheck_PermanentFailureBecomesDeactivated(t *testing.T) {
 func TestRunAuthRecheck_TransientFailureStaysError(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 	m.RegisterExecutor(authRecheckTestExecutor{
-		httpErr: errors.New("context canceled"),
+		identifier: "claude",
+		httpErr:    errors.New("context canceled"),
 	})
 
-	auth := &Auth{ID: "auth-1", Provider: "codex", Status: StatusError, StatusMessage: "old", Unavailable: true}
+	auth := &Auth{ID: "auth-1", Provider: "claude", Status: StatusError, StatusMessage: "old", Unavailable: true}
 	if _, err := m.Register(context.Background(), auth); err != nil {
 		t.Fatalf("register auth: %v", err)
 	}

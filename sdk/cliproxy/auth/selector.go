@@ -20,6 +20,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/thinking"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/executor"
 )
 
@@ -197,11 +198,14 @@ func preferCodexWebsocketAuths(ctx context.Context, provider string, available [
 	return available
 }
 
-func collectAvailableByPriority(auths []*Auth, model string, now time.Time) (available map[int][]*Auth, cooldownCount int, earliest time.Time) {
+func collectAvailableByPriority(auths []*Auth, provider, model string, now time.Time) (available map[int][]*Auth, cooldownCount int, earliest time.Time) {
 	available = make(map[int][]*Auth)
 	for i := 0; i < len(auths); i++ {
 		candidate := auths[i]
 		blocked, reason, next := isAuthBlockedForModel(candidate, model, now)
+		if !blocked {
+			blocked, reason, next = isAuthBlockedByQuotaStore(candidate, provider, now)
+		}
 		if !blocked {
 			priority := authPriority(candidate)
 			available[priority] = append(available[priority], candidate)
@@ -222,7 +226,7 @@ func getAvailableAuths(auths []*Auth, provider, model string, now time.Time) ([]
 		return nil, &Error{Code: "auth_not_found", Message: "no auth candidates"}
 	}
 
-	availableByPriority, cooldownCount, earliest := collectAvailableByPriority(auths, model, now)
+	availableByPriority, cooldownCount, earliest := collectAvailableByPriority(auths, provider, model, now)
 	if len(availableByPriority) == 0 {
 		if cooldownCount == len(auths) && !earliest.IsZero() {
 			providerForError := provider
@@ -368,12 +372,50 @@ func (s *FillFirstSelector) Pick(ctx context.Context, provider, model string, op
 	return available[0], nil
 }
 
+func isPermanentQuotaFetchError(fetchError string) bool {
+	fetchError = strings.ToLower(strings.TrimSpace(fetchError))
+	return strings.Contains(fetchError, "token_invalidated") ||
+		strings.Contains(fetchError, "token invalidated") ||
+		strings.Contains(fetchError, "authentication token has been invalidated") ||
+		strings.Contains(fetchError, "revoked token")
+}
+
+func isAuthBlockedByQuotaStore(auth *Auth, provider string, now time.Time) (bool, blockReason, time.Time) {
+	if auth == nil {
+		return true, blockReasonOther, time.Time{}
+	}
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider != "codex" && provider != "openai" {
+		return false, blockReasonNone, time.Time{}
+	}
+	quota := usage.GetQuotaStore().Get(auth.ID)
+	if quota == nil {
+		return false, blockReasonNone, time.Time{}
+	}
+	if isPermanentQuotaFetchError(quota.FetchError) {
+		return true, blockReasonOther, time.Time{}
+	}
+	if quota.SecondaryWindow == nil || quota.SecondaryWindow.UsedPercent == nil {
+		return false, blockReasonNone, time.Time{}
+	}
+	if *quota.SecondaryWindow.UsedPercent < 100 || quota.SecondaryWindow.ResetAt <= now.Unix() {
+		return false, blockReasonNone, time.Time{}
+	}
+	return true, blockReasonCooldown, time.Unix(quota.SecondaryWindow.ResetAt, 0)
+}
+
 func isAuthBlockedForModel(auth *Auth, model string, now time.Time) (bool, blockReason, time.Time) {
 	if auth == nil {
 		return true, blockReasonOther, time.Time{}
 	}
 	if auth.Disabled || auth.Status == StatusDisabled {
 		return true, blockReasonDisabled, time.Time{}
+	}
+	if auth.Status == StatusDeactivated || auth.Status == StatusRateLimited {
+		return true, blockReasonOther, time.Time{}
+	}
+	if auth.Quota.Exceeded && auth.Quota.NextRecoverAt.After(now) {
+		return true, blockReasonCooldown, auth.Quota.NextRecoverAt
 	}
 	if model != "" {
 		if len(auth.ModelStates) > 0 {

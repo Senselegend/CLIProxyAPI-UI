@@ -438,10 +438,7 @@ func authRecheckProbeURL(auth *Auth) string {
 
 	switch provider {
 	case "codex":
-		if trimmedBase == "" {
-			trimmedBase = "https://chatgpt.com/backend-api/codex"
-		}
-		return trimmedBase + "/responses"
+		return ""
 	case "openai", "openai-compatible", "openai-compat", "openai-compatibility":
 		if trimmedBase == "" {
 			return ""
@@ -544,7 +541,6 @@ func (m *Manager) applyAuthRecheckOutcome(ctx context.Context, authID string, re
 		}
 		return
 	}
-
 	resultErr := &Error{}
 	if err != nil {
 		resultErr.Message = err.Error()
