@@ -2019,7 +2019,13 @@
         const method = String(entry?.method || '').trim().toUpperCase();
         const path = String(entry?.path || '').trim();
         const account = String(entry?.account || '').trim();
-        return !(method === 'HEAD' && path === '/') && account !== '';
+        const model = String(entry?.model || '').trim();
+        const status = normalizeLogStatus(entry?.status);
+        if (method === 'HEAD' && path === '/') return false;
+        if (path.endsWith('/count_tokens')) return false;
+        if (account === '' || account === '--') return false;
+        if (status === 'pending' && (model === '' || model === '--')) return false;
+        return true;
       })
       .sort((a, b) => activityEntryTime(a) - activityEntryTime(b))
       .map(entry => ({
@@ -2232,8 +2238,9 @@
     }
 
     const visibleLogs = getVisibleLogs(logs, state.logVisibleCount);
+    const renderedLogs = visibleLogs.slice().reverse();
 
-    tbody.innerHTML = visibleLogs.map(log => `
+    tbody.innerHTML = renderedLogs.map(log => `
       <tr>
         <td class="log-status-cell ${escapeHtml(log.status)}-row"><span class="log-status ${escapeHtml(log.status)}"><span class="log-status-dot"></span>${capitalize(log.status)}</span></td>
         <td>

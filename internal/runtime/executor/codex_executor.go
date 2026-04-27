@@ -888,24 +888,6 @@ func isCodexFreePlanAuth(auth *cliproxyauth.Auth) bool {
 }
 
 func ensureImageGenerationTool(body []byte, baseModel string, auth *cliproxyauth.Auth) []byte {
-	if strings.HasSuffix(baseModel, "spark") {
-		return body
-	}
-	if isCodexFreePlanAuth(auth) {
-		return body
-	}
-
-	tools := gjson.GetBytes(body, "tools")
-	if !tools.Exists() || !tools.IsArray() {
-		body, _ = sjson.SetRawBytes(body, "tools", imageGenToolArrayJSON)
-		return body
-	}
-	for _, t := range tools.Array() {
-		if t.Get("type").String() == "image_generation" {
-			return body
-		}
-	}
-	body, _ = sjson.SetRawBytes(body, "tools.-1", imageGenToolJSON)
 	return body
 }
 

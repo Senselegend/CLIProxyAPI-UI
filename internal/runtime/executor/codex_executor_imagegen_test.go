@@ -7,40 +7,32 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-func TestEnsureImageGenerationTool_NoTools(t *testing.T) {
+func TestEnsureImageGenerationTool_NoToolsDoesNotInjectImageGeneration(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","input":"draw a cat"}`)
 	result := ensureImageGenerationTool(body, "gpt-5.4", nil)
 
-	tools := gjson.GetBytes(result, "tools")
-	if !tools.IsArray() {
-		t.Fatalf("expected tools array, got %v", tools.Type)
+	if string(result) != string(body) {
+		t.Fatalf("expected body to be unchanged, got %s", string(result))
 	}
-	arr := tools.Array()
-	if len(arr) != 1 {
-		t.Fatalf("expected 1 tool, got %d", len(arr))
-	}
-	if arr[0].Get("type").String() != "image_generation" {
-		t.Fatalf("expected type=image_generation, got %s", arr[0].Get("type").String())
-	}
-	if arr[0].Get("output_format").String() != "png" {
-		t.Fatalf("expected output_format=png, got %s", arr[0].Get("output_format").String())
+	if gjson.GetBytes(result, "tools").Exists() {
+		t.Fatalf("expected no injected tools, got %s", gjson.GetBytes(result, "tools").Raw)
 	}
 }
 
-func TestEnsureImageGenerationTool_ExistingToolsWithoutImageGen(t *testing.T) {
+func TestEnsureImageGenerationTool_ExistingToolsWithoutImageGenDoesNotInjectImageGeneration(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","tools":[{"type":"function","name":"get_weather","parameters":{}}]}`)
 	result := ensureImageGenerationTool(body, "gpt-5.4", nil)
 
+	if string(result) != string(body) {
+		t.Fatalf("expected body to be unchanged, got %s", string(result))
+	}
 	tools := gjson.GetBytes(result, "tools")
 	arr := tools.Array()
-	if len(arr) != 2 {
-		t.Fatalf("expected 2 tools, got %d", len(arr))
+	if len(arr) != 1 {
+		t.Fatalf("expected only original tool, got %d", len(arr))
 	}
 	if arr[0].Get("type").String() != "function" {
 		t.Fatalf("expected first tool type=function, got %s", arr[0].Get("type").String())
-	}
-	if arr[1].Get("type").String() != "image_generation" {
-		t.Fatalf("expected second tool type=image_generation, got %s", arr[1].Get("type").String())
 	}
 }
 
@@ -58,34 +50,34 @@ func TestEnsureImageGenerationTool_AlreadyPresent(t *testing.T) {
 	}
 }
 
-func TestEnsureImageGenerationTool_EmptyToolsArray(t *testing.T) {
+func TestEnsureImageGenerationTool_EmptyToolsArrayDoesNotInjectImageGeneration(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","tools":[]}`)
 	result := ensureImageGenerationTool(body, "gpt-5.4", nil)
 
+	if string(result) != string(body) {
+		t.Fatalf("expected body to be unchanged, got %s", string(result))
+	}
 	tools := gjson.GetBytes(result, "tools")
 	arr := tools.Array()
-	if len(arr) != 1 {
-		t.Fatalf("expected 1 tool, got %d", len(arr))
-	}
-	if arr[0].Get("type").String() != "image_generation" {
-		t.Fatalf("expected type=image_generation, got %s", arr[0].Get("type").String())
+	if len(arr) != 0 {
+		t.Fatalf("expected no tools, got %d", len(arr))
 	}
 }
 
-func TestEnsureImageGenerationTool_WebSearchAndImageGen(t *testing.T) {
+func TestEnsureImageGenerationTool_WebSearchDoesNotInjectImageGeneration(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.4","tools":[{"type":"web_search"}]}`)
 	result := ensureImageGenerationTool(body, "gpt-5.4", nil)
 
+	if string(result) != string(body) {
+		t.Fatalf("expected body to be unchanged, got %s", string(result))
+	}
 	tools := gjson.GetBytes(result, "tools")
 	arr := tools.Array()
-	if len(arr) != 2 {
-		t.Fatalf("expected 2 tools, got %d", len(arr))
+	if len(arr) != 1 {
+		t.Fatalf("expected only original tool, got %d", len(arr))
 	}
 	if arr[0].Get("type").String() != "web_search" {
 		t.Fatalf("expected first tool type=web_search, got %s", arr[0].Get("type").String())
-	}
-	if arr[1].Get("type").String() != "image_generation" {
-		t.Fatalf("expected second tool type=image_generation, got %s", arr[1].Get("type").String())
 	}
 }
 

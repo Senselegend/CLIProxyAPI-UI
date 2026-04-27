@@ -644,6 +644,20 @@ test('normalizeActivityEntries hides request activity entries without accounts',
   assert.equal(rows[0].account, 'user@example.com');
 });
 
+test('normalizeActivityEntries hides token counting activity and unaffiliated pending rows', () => {
+  const rows = normalizeActivityEntries({
+    entries: [
+      { method: 'POST', path: '/v1/messages/count_tokens', account: '--', model: '--', status: 'success' },
+      { method: 'POST', path: '/v1/messages', account: '--', model: '--', status: 'pending' },
+      { method: 'POST', path: '/v1/messages', account: 'user@example.com', model: 'claude-sonnet-4-6', status: 'success' },
+    ],
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].account, 'user@example.com');
+  assert.equal(rows[0].model, 'claude-sonnet-4-6');
+});
+
 test('computeQuotaSummaryFromQuotas averages lower-usage accounts into used percent totals', () => {
   const summary = computeQuotaSummaryFromQuotas([
     {
@@ -1340,6 +1354,29 @@ test('renderLogs shows newest 50 rows and reveals 50 more when requested', () =>
   assert.equal(getVisibleLogs(logs, 50).length, 50);
   assert.equal(getVisibleLogs(logs, 100)[0].id, 'log-21');
   assert.equal(getVisibleLogs(logs, 100)[99].id, 'log-120');
+});
+
+test('renderLogs renders newest visible row first', () => {
+  global.document = createDocumentStub();
+  setLogVisibleCount(50);
+  const logs = makeLogs(120);
+
+  try {
+    renderLogs(logs);
+
+    const tbody = document.getElementById('logs-body');
+    const message120Index = tbody.innerHTML.indexOf('message 120');
+    const message119Index = tbody.innerHTML.indexOf('message 119');
+    const message71Index = tbody.innerHTML.indexOf('message 71');
+
+    assert.ok(message120Index >= 0);
+    assert.ok(message119Index >= 0);
+    assert.ok(message71Index >= 0);
+    assert.ok(message120Index < message119Index);
+    assert.ok(message119Index < message71Index);
+  } finally {
+    delete global.document;
+  }
 });
 
 test('renderLogs renders 50 rows with a show older footer when more rows exist', () => {
