@@ -39,6 +39,14 @@ Notes:
 - `wire_api = "responses"` is required for Codex CLI.
 - After running `launchctl setenv ...`, fully restart the Codex app.
 
+Codex image generation is opt-in. Normal requests do not receive the `image_generation` tool automatically. To make the proxy expose image generation for a request, include `/image` as a standalone token in the prompt, for example:
+
+```text
+/image generate a small robot holding a coffee mug
+```
+
+The proxy will add an OpenAI Responses `image_generation` tool for that request only. If the client already sends an explicit `image_generation` tool, it is preserved and not duplicated.
+
 ### Claude Code
 
 Point Claude Code to the local proxy with this config:

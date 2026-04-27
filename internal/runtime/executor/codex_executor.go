@@ -888,7 +888,80 @@ func isCodexFreePlanAuth(auth *cliproxyauth.Auth) bool {
 }
 
 func ensureImageGenerationTool(body []byte, baseModel string, auth *cliproxyauth.Auth) []byte {
+	if strings.HasSuffix(baseModel, "spark") {
+		return body
+	}
+	if isCodexFreePlanAuth(auth) {
+		return body
+	}
+	if !hasImageGenerationTrigger(body) {
+		return body
+	}
+
+	tools := gjson.GetBytes(body, "tools")
+	if !tools.Exists() || !tools.IsArray() {
+		body, _ = sjson.SetRawBytes(body, "tools", imageGenToolArrayJSON)
+		return body
+	}
+	for _, t := range tools.Array() {
+		if t.Get("type").String() == "image_generation" {
+			return body
+		}
+	}
+	body, _ = sjson.SetRawBytes(body, "tools.-1", imageGenToolJSON)
 	return body
+}
+
+func hasImageGenerationTrigger(body []byte) bool {
+	for _, path := range []string{"input", "instructions", "prompt"} {
+		if containsImageGenerationTrigger(gjson.GetBytes(body, path)) {
+			return true
+		}
+	}
+	return containsImageGenerationTrigger(gjson.GetBytes(body, "messages"))
+}
+
+func containsImageGenerationTrigger(value gjson.Result) bool {
+	switch {
+	case value.IsArray():
+		for _, item := range value.Array() {
+			if containsImageGenerationTrigger(item) {
+				return true
+			}
+		}
+	case value.IsObject():
+		if containsImageGenerationTrigger(value.Get("content")) || containsImageGenerationTrigger(value.Get("text")) {
+			return true
+		}
+	default:
+		return hasStandaloneImageTrigger(value.String())
+	}
+	return false
+}
+
+func hasStandaloneImageTrigger(text string) bool {
+	lower := strings.ToLower(text)
+	for pos := 0; pos < len(lower); {
+		idx := strings.Index(lower[pos:], "/image")
+		if idx < 0 {
+			return false
+		}
+		start := pos + idx
+		end := start + len("/image")
+		if isImageTriggerBoundary(lower, start-1) && isImageTriggerBoundary(lower, end) {
+			return true
+		}
+		pos = end
+	}
+	return false
+}
+
+func isImageTriggerBoundary(text string, index int) bool {
+	if index < 0 || index >= len(text) {
+		return true
+	}
+	ch := text[index]
+	return !(ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9' || ch == '_' || ch == '-' || ch == '/')
 }
 
 func publishCodexImageToolUsage(ctx context.Context, reporter *helps.UsageReporter, body []byte, completedData []byte) {

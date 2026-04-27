@@ -36,8 +36,45 @@ func TestEnsureImageGenerationTool_ExistingToolsWithoutImageGenDoesNotInjectImag
 	}
 }
 
-func TestEnsureImageGenerationTool_AlreadyPresent(t *testing.T) {
-	body := []byte(`{"model":"gpt-5.4","tools":[{"type":"image_generation","output_format":"webp"},{"type":"function","name":"f1"}]}`)
+func TestEnsureImageGenerationTool_ImageTriggerInjectsImageGeneration(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","input":"/image draw a cat"}`)
+	result := ensureImageGenerationTool(body, "gpt-5.4", nil)
+
+	tools := gjson.GetBytes(result, "tools")
+	if !tools.IsArray() {
+		t.Fatalf("expected tools array, got %v", tools.Type)
+	}
+	arr := tools.Array()
+	if len(arr) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(arr))
+	}
+	if arr[0].Get("type").String() != "image_generation" {
+		t.Fatalf("expected type=image_generation, got %s", arr[0].Get("type").String())
+	}
+	if arr[0].Get("output_format").String() != "png" {
+		t.Fatalf("expected output_format=png, got %s", arr[0].Get("output_format").String())
+	}
+}
+
+func TestEnsureImageGenerationTool_ImageTriggerAppendsToExistingTools(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","input":"please /image draw a cat","tools":[{"type":"web_search"}]}`)
+	result := ensureImageGenerationTool(body, "gpt-5.4", nil)
+
+	tools := gjson.GetBytes(result, "tools")
+	arr := tools.Array()
+	if len(arr) != 2 {
+		t.Fatalf("expected 2 tools, got %d", len(arr))
+	}
+	if arr[0].Get("type").String() != "web_search" {
+		t.Fatalf("expected first tool type=web_search, got %s", arr[0].Get("type").String())
+	}
+	if arr[1].Get("type").String() != "image_generation" {
+		t.Fatalf("expected second tool type=image_generation, got %s", arr[1].Get("type").String())
+	}
+}
+
+func TestEnsureImageGenerationTool_ImageTriggerDoesNotDuplicateExistingImageGeneration(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.4","input":"/image draw a cat","tools":[{"type":"image_generation","output_format":"webp"},{"type":"function","name":"f1"}]}`)
 	result := ensureImageGenerationTool(body, "gpt-5.4", nil)
 
 	tools := gjson.GetBytes(result, "tools")
@@ -47,6 +84,23 @@ func TestEnsureImageGenerationTool_AlreadyPresent(t *testing.T) {
 	}
 	if arr[0].Get("output_format").String() != "webp" {
 		t.Fatalf("expected original output_format=webp preserved, got %s", arr[0].Get("output_format").String())
+	}
+}
+
+func TestEnsureImageGenerationTool_ImageTriggerFalsePositivesDoNotInjectImageGeneration(t *testing.T) {
+	cases := []string{
+		`{"model":"gpt-5.4","input":"document the /images endpoint"}`,
+		`{"model":"gpt-5.4","input":"open https://example.com/image"}`,
+		`{"model":"gpt-5.4","input":"use /image-generation docs"}`,
+	}
+	for _, body := range cases {
+		result := ensureImageGenerationTool([]byte(body), "gpt-5.4", nil)
+		if string(result) != body {
+			t.Fatalf("expected body to be unchanged, got %s", string(result))
+		}
+		if gjson.GetBytes(result, "tools").Exists() {
+			t.Fatalf("expected no injected tools, got %s", gjson.GetBytes(result, "tools").Raw)
+		}
 	}
 }
 
