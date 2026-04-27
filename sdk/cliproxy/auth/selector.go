@@ -41,9 +41,14 @@ type blockReason int
 const (
 	blockReasonNone blockReason = iota
 	blockReasonCooldown
+	blockReasonModelCooldown
 	blockReasonDisabled
 	blockReasonOther
 )
+
+func isCooldownBlockReason(reason blockReason) bool {
+	return reason == blockReasonCooldown || reason == blockReasonModelCooldown
+}
 
 type modelCooldownError struct {
 	model    string
@@ -204,7 +209,7 @@ func collectAvailableByPriority(auths []*Auth, provider, model string, now time.
 		candidate := auths[i]
 		quotaHealthy, quotaBlocked, quotaReason, quotaNext := quotaStoreStatus(candidate, provider, now)
 		blocked, reason, next := isAuthBlockedForModel(candidate, model, now)
-		if quotaHealthy && candidate != nil && candidate.Status == StatusRateLimited {
+		if quotaHealthy && candidate != nil && (candidate.Status == StatusRateLimited || reason == blockReasonModelCooldown) {
 			blocked, reason, next = false, blockReasonNone, time.Time{}
 		}
 		if quotaBlocked {
@@ -215,7 +220,7 @@ func collectAvailableByPriority(auths []*Auth, provider, model string, now time.
 			available[priority] = append(available[priority], candidate)
 			continue
 		}
-		if reason == blockReasonCooldown {
+		if isCooldownBlockReason(reason) {
 			cooldownCount++
 			if !next.IsZero() && (earliest.IsZero() || next.Before(earliest)) {
 				earliest = next
@@ -453,7 +458,7 @@ func isAuthBlockedForModel(auth *Auth, model string, now time.Time) (bool, block
 							next = now
 						}
 						if state.Quota.Exceeded {
-							return true, blockReasonCooldown, next
+							return true, blockReasonModelCooldown, next
 						}
 						return true, blockReasonOther, next
 					}

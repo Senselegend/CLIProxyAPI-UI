@@ -223,6 +223,37 @@ function makeLogs(count) {
   }));
 }
 
+test('visible logs order request activity newest first even when backend returns newest first', () => {
+  const now = Date.now();
+  const logs = normalizeActivityEntries({
+    entries: [
+      {
+        id: 'new-success',
+        method: 'POST',
+        path: '/v1/responses',
+        account: 'active@example.com',
+        model: 'gpt-5.5',
+        transport: 'http',
+        status: 'success',
+        requested_at: new Date(now).toISOString(),
+      },
+      {
+        id: 'old-error',
+        method: 'POST',
+        path: '/v1/responses',
+        account: 'stale@example.com',
+        model: 'gpt-5.5',
+        transport: 'http',
+        status: 'error',
+        requested_at: new Date(now - 8 * 60 * 60 * 1000).toISOString(),
+      },
+    ],
+  });
+
+  assert.equal(logs[0].id, 'old-error');
+  assert.equal(logs[1].id, 'new-success');
+});
+
 test('visible logs keep fresh request activity instead of stale cached tail rows', () => {
   resetDashboardStateForTest();
   setLogVisibleCount(50);

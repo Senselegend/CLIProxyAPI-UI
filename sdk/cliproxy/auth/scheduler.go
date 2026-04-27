@@ -693,7 +693,7 @@ func (m *modelScheduler) upsertEntryLocked(meta *scheduledAuthMeta, now time.Tim
 	switch {
 	case !blocked:
 		entry.state = scheduledStateReady
-	case reason == blockReasonCooldown:
+	case isCooldownBlockReason(reason):
 		entry.state = scheduledStateCooldown
 		entry.nextRetryAt = next
 	case reason == blockReasonDisabled:
@@ -739,7 +739,7 @@ func (m *modelScheduler) promoteExpiredLocked(now time.Time) {
 		case !blocked:
 			entry.state = scheduledStateReady
 			entry.nextRetryAt = time.Time{}
-		case reason == blockReasonCooldown:
+		case isCooldownBlockReason(reason):
 			entry.state = scheduledStateCooldown
 			entry.nextRetryAt = next
 		case reason == blockReasonDisabled:

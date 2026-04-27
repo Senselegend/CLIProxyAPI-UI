@@ -200,6 +200,46 @@ func TestFillFirstSelectorPick_DoesNotAllowStaleRateLimitedStatusWithTransientQu
 	}
 }
 
+func TestFillFirstSelectorPick_DoesNotAllowHealthyQuotaToBypassAuthLevelCooldown(t *testing.T) {
+	store := usage.NewQuotaStore()
+	usage.SetQuotaStoreForTest(store)
+	t.Cleanup(func() {
+		usage.SetQuotaStoreForTest(usage.NewQuotaStore())
+	})
+
+	usedPercent := 0.0
+	store.Set("a", &usage.AccountQuota{
+		AccountID: "a",
+		SecondaryWindow: &usage.QuotaWindow{
+			UsedPercent: &usedPercent,
+			ResetAt:     time.Now().Add(time.Hour).Unix(),
+		},
+	})
+
+	selector := &FillFirstSelector{}
+	auths := []*Auth{
+		{
+			ID: "a",
+			Quota: QuotaState{
+				Exceeded:      true,
+				NextRecoverAt: time.Now().Add(time.Hour),
+			},
+		},
+		{ID: "b"},
+	}
+
+	got, err := selector.Pick(context.Background(), "codex", "", cliproxyexecutor.Options{}, auths)
+	if err != nil {
+		t.Fatalf("Pick() error = %v", err)
+	}
+	if got == nil {
+		t.Fatalf("Pick() auth = nil")
+	}
+	if got.ID != "b" {
+		t.Fatalf("Pick() auth.ID = %q, want %q", got.ID, "b")
+	}
+}
+
 func TestRoundRobinSelectorPick_CyclesDeterministic(t *testing.T) {
 	t.Parallel()
 
@@ -518,6 +558,52 @@ func TestIsAuthBlockedForModel_UnavailableWithoutNextRetryIsNotBlocked(t *testin
 	}
 	if !next.IsZero() {
 		t.Fatalf("next = %v, want zero", next)
+	}
+}
+
+func TestFillFirstSelectorPick_AllowsHealthyQuotaDespiteStaleModelCooldown(t *testing.T) {
+	store := usage.NewQuotaStore()
+	usage.SetQuotaStoreForTest(store)
+	t.Cleanup(func() {
+		usage.SetQuotaStoreForTest(usage.NewQuotaStore())
+	})
+
+	usedPercent := 0.0
+	store.Set("a", &usage.AccountQuota{
+		AccountID: "a",
+		SecondaryWindow: &usage.QuotaWindow{
+			UsedPercent: &usedPercent,
+			ResetAt:     time.Now().Add(time.Hour).Unix(),
+		},
+	})
+
+	selector := &FillFirstSelector{}
+	auths := []*Auth{
+		{
+			ID: "a",
+			ModelStates: map[string]*ModelState{
+				"gpt-5.5": {
+					Status:         StatusRateLimited,
+					Unavailable:    true,
+					NextRetryAfter: time.Now().Add(time.Hour),
+					Quota: QuotaState{
+						Exceeded:      true,
+						NextRecoverAt: time.Now().Add(time.Hour),
+					},
+				},
+			},
+		},
+	}
+
+	got, err := selector.Pick(context.Background(), "codex", "gpt-5.5", cliproxyexecutor.Options{}, auths)
+	if err != nil {
+		t.Fatalf("Pick() error = %v", err)
+	}
+	if got == nil {
+		t.Fatalf("Pick() auth = nil")
+	}
+	if got.ID != "a" {
+		t.Fatalf("Pick() auth.ID = %q, want %q", got.ID, "a")
 	}
 }
 

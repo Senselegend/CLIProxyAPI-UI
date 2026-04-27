@@ -50,3 +50,80 @@ func TestStoreEnrichesEntryByRequestID(t *testing.T) {
 		t.Fatalf("total tokens = %d, want 30", got.Tokens.TotalTokens)
 	}
 }
+
+func TestStoreDoesNotEnrichUnrelatedEntryWithoutRequestID(t *testing.T) {
+	store := NewStore(10)
+	now := time.Date(2026, 4, 20, 14, 30, 0, 0, time.UTC)
+
+	store.Start(StartEvent{
+		ID:                  "req_messages",
+		Method:              "POST",
+		Path:                "/v1/messages",
+		DownstreamTransport: "http",
+		StartedAt:           now,
+	})
+	store.Finish(FinishEvent{
+		ID:         "req_messages",
+		HTTPStatus: 200,
+		Latency:    250 * time.Millisecond,
+		FinishedAt: now.Add(250 * time.Millisecond),
+	})
+
+	store.EnrichUsage("", coreusage.Record{
+		Provider:    "codex",
+		Model:       "gpt-image-2",
+		Source:      "user@example.com",
+		RequestedAt: now.Add(2 * time.Second),
+	})
+
+	entries := store.Snapshot(SnapshotOptions{Limit: 10})
+	if len(entries) != 1 {
+		t.Fatalf("entries len = %d, want 1", len(entries))
+	}
+	got := entries[0]
+	if got.Model != "--" {
+		t.Fatalf("Model = %q, want unchanged", got.Model)
+	}
+	if got.Account != "--" {
+		t.Fatalf("Account = %q, want unchanged", got.Account)
+	}
+}
+
+func TestStoreKeepsPrimaryRequestModelWhenAdditionalToolUsageArrives(t *testing.T) {
+	store := NewStore(10)
+	now := time.Date(2026, 4, 20, 14, 30, 0, 0, time.UTC)
+
+	store.Start(StartEvent{
+		ID:                  "req_messages",
+		Method:              "POST",
+		Path:                "/v1/messages",
+		DownstreamTransport: "http",
+		StartedAt:           now,
+	})
+	store.Finish(FinishEvent{
+		ID:         "req_messages",
+		HTTPStatus: 200,
+		Latency:    250 * time.Millisecond,
+		FinishedAt: now.Add(250 * time.Millisecond),
+	})
+
+	store.EnrichUsage("req_messages", coreusage.Record{
+		Provider: "codex",
+		Model:    "gpt-5.5",
+		Source:   "user@example.com",
+	})
+	store.EnrichUsage("req_messages", coreusage.Record{
+		Provider: "codex",
+		Model:    "gpt-image-2",
+		Source:   "user@example.com",
+	})
+
+	entries := store.Snapshot(SnapshotOptions{Limit: 10})
+	if len(entries) != 1 {
+		t.Fatalf("entries len = %d, want 1", len(entries))
+	}
+	got := entries[0]
+	if got.Model != "gpt-5.5" {
+		t.Fatalf("Model = %q, want primary request model", got.Model)
+	}
+}

@@ -962,7 +962,7 @@ func (m *Manager) availableAuthsForRouteModel(auths []*Auth, provider, routeMode
 			availableByPriority[priority] = append(availableByPriority[priority], candidate)
 			continue
 		}
-		if reason == blockReasonCooldown {
+		if isCooldownBlockReason(reason) {
 			cooldownCount++
 			if !next.IsZero() && (earliest.IsZero() || next.Before(earliest)) {
 				earliest = next

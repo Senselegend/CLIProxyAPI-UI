@@ -120,7 +120,7 @@ func TestIsAuthBlockedForModel_ClaudeWithCreditsStillBlockedDuringCooldown(t *te
 	})
 
 	blocked, reason, _ := isAuthBlockedForModel(auth, "claude-sonnet-4-6", time.Now())
-	if !blocked || reason != blockReasonCooldown {
+	if !blocked || !isCooldownBlockReason(reason) {
 		t.Fatalf("expected auth to be blocked during cooldown even with credits, got blocked=%v reason=%v", blocked, reason)
 	}
 }
@@ -148,7 +148,7 @@ func TestIsAuthBlockedForModel_KeepsGeminiBlockedWithoutCreditsBypass(t *testing
 	})
 
 	blocked, reason, _ := isAuthBlockedForModel(auth, "gemini-3-flash", time.Now())
-	if !blocked || reason != blockReasonCooldown {
+	if !blocked || !isCooldownBlockReason(reason) {
 		t.Fatalf("expected gemini auth to remain blocked, got blocked=%v reason=%v", blocked, reason)
 	}
 }

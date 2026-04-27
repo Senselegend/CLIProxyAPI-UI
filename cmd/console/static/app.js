@@ -2021,6 +2021,7 @@
         const account = String(entry?.account || '').trim();
         return !(method === 'HEAD' && path === '/') && account !== '';
       })
+      .sort((a, b) => activityEntryTime(a) - activityEntryTime(b))
       .map(entry => ({
         id: entry.id || '--',
         time: formatActivityTime(entry.requested_at),
@@ -2032,6 +2033,11 @@
         latency: formatLatency(entry.latency_ms),
         status: normalizeLogStatus(entry.status)
       }));
+  }
+
+  function activityEntryTime(entry) {
+    const timestamp = Date.parse(entry?.requested_at || '');
+    return Number.isFinite(timestamp) ? timestamp : 0;
   }
 
   function normalizeLogLines(data) {

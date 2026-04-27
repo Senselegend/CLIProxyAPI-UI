@@ -121,7 +121,7 @@ func (s *Store) EnrichUsage(requestID string, record coreusage.Record) {
 	if provider := strings.TrimSpace(record.Provider); provider != "" {
 		entry.Provider = provider
 	}
-	if model := strings.TrimSpace(record.Model); model != "" {
+	if model := strings.TrimSpace(record.Model); model != "" && (entry.Model == "" || entry.Model == "--") {
 		entry.Model = model
 	}
 	if account := accountFromRecord(record); account != "" {
@@ -178,20 +178,11 @@ func (s *Store) upsertLocked(entry Entry) {
 }
 
 func (s *Store) findUsageTargetLocked(id string, record coreusage.Record) (int, bool) {
-	if id != "" {
-		if idx, ok := s.index[id]; ok {
-			return idx, true
-		}
+	if id == "" {
+		return 0, false
 	}
-	if !record.RequestedAt.IsZero() {
-		for i := len(s.entries) - 1; i >= 0; i-- {
-			entry := s.entries[i]
-			if !entry.RequestedAt.IsZero() && entry.RequestedAt.Sub(record.RequestedAt).Abs() <= 5*time.Second {
-				return i, true
-			}
-		}
-	}
-	return 0, false
+	idx, ok := s.index[id]
+	return idx, ok
 }
 
 func messageFor(method, path string) string {
