@@ -884,30 +884,56 @@
     const quotaList = Array.isArray(quotas) ? quotas : [];
 
     function computeWindowAverage(windowKey, mapQuota) {
-      const values = quotaList
-        .map(quota => {
-          if (typeof mapQuota === 'function') {
-            const mapped = mapQuota(quota);
-            if (mapped != null) {
-              const mappedValue = Number(mapped);
-              return Number.isFinite(mappedValue) ? mappedValue : null;
+      const windowName = windowKey === 'primary_window' ? 'primary' : 'secondary';
+      let totalCapacity = 0;
+      let totalUsed = 0;
+
+      quotaList.forEach(quota => {
+        const window = quota && quota[windowKey];
+        let usedPercent = null;
+        if (typeof mapQuota === 'function') {
+          const mapped = mapQuota(quota);
+          if (mapped != null) {
+            const mappedValue = Number(mapped);
+            if (Number.isFinite(mappedValue)) {
+              usedPercent = mappedValue;
             }
           }
-          const window = quota && quota[windowKey];
+        }
+        if (usedPercent == null) {
           if (!window || window.used_percent == null) {
-            return null;
+            return;
           }
           const value = Number(window.used_percent);
-          return Number.isFinite(value) ? value : null;
-        })
-        .filter(Number.isFinite);
+          if (!Number.isFinite(value)) {
+            return;
+          }
+          usedPercent = value;
+        }
 
-      if (values.length === 0) {
+        const capacity = quotaWindowCapacity(window, quota?.plan_type, windowName);
+        totalCapacity += capacity;
+        totalUsed += (capacity * usedPercent) / 100;
+      });
+
+      if (totalCapacity === 0) {
         return null;
       }
 
-      const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+      const average = (totalUsed / totalCapacity) * 100;
       return Math.max(0, Math.min(100, Math.round(average)));
+    }
+
+    function quotaWindowCapacity(window, planType, windowName) {
+      const explicitCapacity = Number(window?.capacity);
+      if (Number.isFinite(explicitCapacity) && explicitCapacity > 0) {
+        return explicitCapacity;
+      }
+      const normalizedPlan = String(planType || '').trim().toLowerCase();
+      if (windowName === 'primary') {
+        return normalizedPlan === 'pro' ? 1500 : 225;
+      }
+      return normalizedPlan === 'pro' ? 50400 : 7560;
     }
 
     function hasActiveExhaustedLongWindow(quota) {

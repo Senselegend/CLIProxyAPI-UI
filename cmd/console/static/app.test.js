@@ -696,6 +696,26 @@ test('computeQuotaSummaryFromQuotas ignores missing windows when averaging used 
   });
 });
 
+test('computeQuotaSummaryFromQuotas weights Pro accounts by quota capacity', () => {
+  const summary = computeQuotaSummaryFromQuotas([
+    {
+      plan_type: 'plus',
+      primary_window: { used_percent: 100 },
+      secondary_window: { used_percent: 100 },
+    },
+    {
+      plan_type: 'pro',
+      primary_window: { used_percent: 0 },
+      secondary_window: { used_percent: 0 },
+    },
+  ]);
+
+  assert.deepEqual(summary, {
+    primary_used_percent: 13,
+    secondary_used_percent: 13,
+  });
+});
+
 test('computeQuotaSummaryFromQuotas preserves unknown windows when no usable data exists', () => {
   const summary = computeQuotaSummaryFromQuotas([
     {},
