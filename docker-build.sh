@@ -133,6 +133,8 @@ read -r -p "Enter choice [1-2]: " choice
 case "$choice" in
   1)
     echo "--- Running with Pre-built Image ---"
+    export CLI_PROXY_API_PULL_POLICY="always"
+    export CLI_CONSOLE_PULL_POLICY="never"
     if [[ "${WITH_USAGE}" == "true" ]]; then
       export_stats
     fi
@@ -158,10 +160,13 @@ case "$choice" in
     echo "  Build Date: ${BUILD_DATE}"
     echo "----------------------------------------"
 
-    # Build and start the services with a local-only image tag
-    export CLI_PROXY_IMAGE="cli-proxy-api:local"
+    # Build and start the services with local-only image tags
+    export CLI_PROXY_API_IMAGE="cli-proxy-api:local"
+    export CLI_PROXY_API_PULL_POLICY="never"
+    export CLI_CONSOLE_IMAGE="cli-console:local"
+    export CLI_CONSOLE_PULL_POLICY="never"
 
-    echo "Building the Docker image..."
+    echo "Building the Docker images..."
     docker compose build \
       --build-arg VERSION="${VERSION}" \
       --build-arg COMMIT="${COMMIT}" \
