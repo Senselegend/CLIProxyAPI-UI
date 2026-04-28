@@ -50,9 +50,9 @@ wire_api = "responses"
     "ANTHROPIC_AUTH_TOKEN": "my-local-proxy-key",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gpt-5.4-mini",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "gpt-5.4",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "gpt-5.4"
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "gpt-5.5"
   },
-  "model": "gpt-5.4"
+  "model": "gpt-5.5"
 }
 ```
 
