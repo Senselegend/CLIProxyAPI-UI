@@ -11,6 +11,7 @@ So you can use local or multi-account CLI access with OpenAI(include Responses)/
 Russian version: [README_RU.md](README_RU.md)
 
 This quick setup is specifically for using Codex/OpenAI accounts through CLIProxyAPI.
+run podman-build.sh or docker-build.sh, than select 2 and go to setup your enviroment.
 
 ### Codex CLI
 
