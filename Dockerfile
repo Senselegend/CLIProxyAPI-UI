@@ -15,7 +15,7 @@ ARG BUILD_DATE=unknown
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w -X 'main.Version=${VERSION}' -X 'main.Commit=${COMMIT}' -X 'main.BuildDate=${BUILD_DATE}'" -o /out/CLIProxyAPI ./cmd/server/
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/cli-console ./cmd/console/
 
-FROM alpine:3.22.0 AS api
+FROM alpine:3.23 AS api
 
 RUN apk add --no-cache tzdata
 
@@ -35,7 +35,7 @@ RUN cp /usr/share/zoneinfo/${TZ} /etc/localtime && echo "${TZ}" > /etc/timezone
 
 CMD ["./CLIProxyAPI"]
 
-FROM alpine:3.22.0 AS console
+FROM alpine:3.23 AS console
 
 RUN apk add --no-cache tzdata
 
