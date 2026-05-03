@@ -7,8 +7,8 @@
   const LOGS_CACHE_LIMIT = 200;
   const LOGS_PAGE_SIZE = 50;
   const SUMMARY_WINDOW_KEY = 'dashboard-summary-window';
-  const RECOVERY_POLL_ATTEMPTS = 4;
-  const RECOVERY_POLL_DELAY_MS = 1500;
+  const RECOVERY_POLL_ATTEMPTS = 15;
+  const RECOVERY_POLL_DELAY_MS = 2000;
   const HARD_REFRESH_DOUBLE_CLICK_WINDOW_MS = 1500;
   const LIVE_REFRESH_INTERVAL_MS = 60000;
   const DEFAULT_SUMMARY_WINDOW = 'last_7_days';
@@ -600,12 +600,15 @@
       let recovery = null;
       if (hardRefresh) {
         showToast('Hard refresh in progress', 'info');
-        recovery = await triggerQuotaRecovery().catch(() => null);
+        const quotaRecovery = await triggerQuotaRecovery().catch(() => null);
+        // The backend quota-recovery endpoint already triggers auth rechecks.
+        // Normalize to the same shape the single-click path uses so polling works.
+        recovery = quotaRecovery && quotaRecovery.auth_recheck ? quotaRecovery.auth_recheck : null;
       } else {
         recovery = await triggerAccountRecheck().catch(() => null);
-        if (recovery && recovery.triggered > 0) {
-          showToast(`Rechecking ${recovery.triggered} accounts`, 'info');
-        }
+      }
+      if (recovery && recovery.triggered > 0) {
+        showToast(`Rechecking ${recovery.triggered} accounts`, 'info');
       }
       await runRecoveryPolling(recovery);
       if (hardRefresh) {

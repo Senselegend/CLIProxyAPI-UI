@@ -1192,7 +1192,7 @@ test('handleRefresh stops polling after bounded attempts when accounts stay sync
 
   try {
     await handleRefresh();
-    assert.equal(authFilesCallCount, 6);
+    assert.equal(authFilesCallCount, 17);
   } finally {
     delete global.fetch;
     delete global.document;
