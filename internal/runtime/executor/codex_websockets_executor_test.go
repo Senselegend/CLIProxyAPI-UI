@@ -375,6 +375,11 @@ func TestApplyCodexWebsocketHeadersUsesCanonicalAccountHeader(t *testing.T) {
 	if len(values) != 1 || values[0] != "acct-1" {
 		t.Fatalf("ChatGPT-Account-ID values = %#v, want [acct-1]", values)
 	}
+=======
+	if got := headers.Get("ChatGPT-Account-ID"); got != "acct-1" {
+		t.Fatalf("ChatGPT-Account-ID = %s, want acct-1", got)
+	}
+>>>>>>> c19ae1d5 (Align Codex websocket protocol semantics)
 }
 
 func TestBuildCodexResponsesWebsocketURLRequiresHTTPURL(t *testing.T) {
