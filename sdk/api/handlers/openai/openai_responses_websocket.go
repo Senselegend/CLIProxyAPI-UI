@@ -130,11 +130,9 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 		appendWebsocketTimelineEvent(&wsTimelineLog, "request", payload, time.Now())
 
 		allowIncrementalInputWithPreviousResponseID := false
-		allowCompactionReplayBypass := false
 		if pinnedAuthID != "" && h != nil && h.AuthManager != nil {
 			if pinnedAuth, ok := h.AuthManager.GetByID(pinnedAuthID); ok && pinnedAuth != nil {
 				allowIncrementalInputWithPreviousResponseID = websocketUpstreamSupportsIncrementalInput(pinnedAuth.Attributes, pinnedAuth.Metadata)
-				allowCompactionReplayBypass = websocketUpstreamSupportsIncrementalInput(pinnedAuth.Attributes, pinnedAuth.Metadata)
 			}
 		} else {
 			requestModelName := strings.TrimSpace(gjson.GetBytes(payload, "model").String())
@@ -142,6 +140,18 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 				requestModelName = strings.TrimSpace(gjson.GetBytes(lastRequest, "model").String())
 			}
 			allowIncrementalInputWithPreviousResponseID = h.websocketUpstreamSupportsIncrementalInputForModel(requestModelName)
+		}
+
+		allowCompactionReplayBypass := false
+		if pinnedAuthID != "" && h != nil && h.AuthManager != nil {
+			if pinnedAuth, ok := h.AuthManager.GetByID(pinnedAuthID); ok && pinnedAuth != nil {
+				allowCompactionReplayBypass = responsesWebsocketAuthSupportsCompactionReplay(pinnedAuth)
+			}
+		} else {
+			requestModelName := strings.TrimSpace(gjson.GetBytes(payload, "model").String())
+			if requestModelName == "" {
+				requestModelName = strings.TrimSpace(gjson.GetBytes(lastRequest, "model").String())
+			}
 			allowCompactionReplayBypass = h.websocketUpstreamSupportsCompactionReplayForModel(requestModelName)
 		}
 		if forceTranscriptReplayNextRequest {
