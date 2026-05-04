@@ -45,6 +45,13 @@ func TestOllamaRoutesEnabledAndVersionPublic(t *testing.T) {
 	if chat.Code != http.StatusNotFound {
 		t.Fatalf("disabled chat status=%d body=%s", chat.Code, chat.Body.String())
 	}
+
+	generate := httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/generate", strings.NewReader(`{"model":"m"}`))
+	engine.ServeHTTP(generate, req)
+	if generate.Code != http.StatusNotFound || !strings.Contains(generate.Body.String(), "ollama module is disabled") {
+		t.Fatalf("disabled generate status=%d body=%s", generate.Code, generate.Body.String())
+	}
 }
 
 func TestOllamaRoutesLocalhostOnly(t *testing.T) {

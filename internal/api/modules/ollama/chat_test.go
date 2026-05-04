@@ -75,3 +75,70 @@ func TestChatHandlerDispatchesBufferedRequest(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateHandlerDispatchesMappedStreamingRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mapper := NewModelMapper([]config.OllamaModelMapping{{From: "ollama-model", To: "openai-model"}})
+	var downstreamBody string
+	handler := GenerateHandler(mapper, func(c *gin.Context) {
+		body, _ := io.ReadAll(c.Request.Body)
+		downstreamBody = string(body)
+		if c.Request.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("path = %s", c.Request.URL.Path)
+		}
+		c.Writer.WriteHeader(http.StatusOK)
+		c.Writer.Write([]byte(`data: {"choices":[{"delta":{"content":"hi"}}]}` + "\n\n"))
+		c.Writer.Write([]byte("data: [DONE]\n\n"))
+	})
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/generate", strings.NewReader(`{"model":"ollama-model","prompt":"hello"}`))
+	handler(c)
+
+	for _, want := range []string{`"model":"openai-model"`, `"stream":true`, `"role":"user"`, `"content":"hello"`} {
+		if !strings.Contains(downstreamBody, want) {
+			t.Fatalf("downstream body missing %s:\n%s", want, downstreamBody)
+		}
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `"response":"hi"`) || !strings.Contains(body, `"done":true`) {
+		t.Fatalf("response not translated to Ollama generate stream:\n%s", body)
+	}
+}
+
+func TestGenerateHandlerUnknownModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := GenerateHandler(NewModelMapper(nil), func(c *gin.Context) {
+		t.Fatal("downstream should not be called")
+	})
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/generate", strings.NewReader(`{"model":"missing"}`))
+	handler(c)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGenerateHandlerDispatchesBufferedRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mapper := NewModelMapper([]config.OllamaModelMapping{{From: "ollama-model", To: "openai-model"}})
+	handler := GenerateHandler(mapper, func(c *gin.Context) {
+		c.Writer.WriteHeader(http.StatusOK)
+		c.Writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hello"}}],"usage":{"prompt_tokens":4,"completion_tokens":2}}`))
+	})
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/generate", strings.NewReader(`{"model":"ollama-model","stream":false,"prompt":"hello"}`))
+	handler(c)
+
+	body := rec.Body.String()
+	for _, want := range []string{`"model":"ollama-model"`, `"response":"hello"`, `"done":true`, `"prompt_eval_count":4`, `"eval_count":2`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %s in body:\n%s", want, body)
+		}
+	}
+}

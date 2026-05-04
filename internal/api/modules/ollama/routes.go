@@ -6,7 +6,7 @@ func (m *OllamaModule) registerRoutes(engine *gin.Engine, downstream gin.Handler
 	api := engine.Group("/api")
 	localOnly := m.localhostOnlyMiddleware()
 	noCors := noCORSMiddleware()
-	for _, path := range []string{"/chat", "/embeddings", "/show", "/tags"} {
+	for _, path := range []string{"/chat", "/generate", "/embeddings", "/show", "/tags"} {
 		api.OPTIONS(path, noCors)
 	}
 	engine.HEAD("/", func(c *gin.Context) {
@@ -14,6 +14,9 @@ func (m *OllamaModule) registerRoutes(engine *gin.Engine, downstream gin.Handler
 	})
 	api.POST("/chat", noCors, localOnly, m.enabledMiddleware(), func(c *gin.Context) {
 		ChatHandler(m.getModelMapper(), downstream)(c)
+	})
+	api.POST("/generate", noCors, localOnly, m.enabledMiddleware(), func(c *gin.Context) {
+		GenerateHandler(m.getModelMapper(), downstream)(c)
 	})
 	api.POST("/embeddings", noCors, localOnly, m.enabledMiddleware(), func(c *gin.Context) {
 		EmbeddingsHandler(m.getEmbedProxy())(c)
