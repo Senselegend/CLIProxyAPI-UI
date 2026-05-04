@@ -12,9 +12,6 @@ func (m *OllamaModule) registerRoutes(engine *gin.Engine, downstream gin.Handler
 	engine.HEAD("/", func(c *gin.Context) {
 		c.Status(200)
 	})
-	engine.GET("/", func(c *gin.Context) {
-		c.Status(200)
-	})
 	api.POST("/chat", noCors, localOnly, m.enabledMiddleware(), func(c *gin.Context) {
 		ChatHandler(m.getModelMapper(), downstream)(c)
 	})

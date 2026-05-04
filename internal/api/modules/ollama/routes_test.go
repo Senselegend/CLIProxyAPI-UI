@@ -32,13 +32,6 @@ func TestOllamaRoutesEnabledAndVersionPublic(t *testing.T) {
 		t.Fatalf("root HEAD status=%d body=%s", rootHead.Code, rootHead.Body.String())
 	}
 
-	rootGet := httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/", nil)
-	engine.ServeHTTP(rootGet, req)
-	if rootGet.Code != http.StatusOK {
-		t.Fatalf("root GET status=%d body=%s", rootGet.Code, rootGet.Body.String())
-	}
-
 	version := httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/version", nil)
 	engine.ServeHTTP(version, req)
