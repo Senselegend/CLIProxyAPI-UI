@@ -26,6 +26,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api/middleware"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api/modules"
 	ampmodule "github.com/router-for-me/CLIProxyAPI/v6/internal/api/modules/amp"
+	ollamamodule "github.com/router-for-me/CLIProxyAPI/v6/internal/api/modules/ollama"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/cache"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/console/activity"
@@ -172,6 +173,8 @@ type Server struct {
 
 	// ampModule is the Amp routing module for model mapping hot-reload
 	ampModule *ampmodule.AmpModule
+	// ollamaModule is the Ollama-compatible routing module for hot-reload
+	ollamaModule *ollamamodule.OllamaModule
 
 	// managementRoutesRegistered tracks whether the management routes have been attached to the engine.
 	managementRoutesRegistered atomic.Bool
@@ -300,6 +303,11 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	}
 	if err := modules.RegisterModule(ctx, s.ampModule); err != nil {
 		log.Errorf("Failed to register Amp module: %v", err)
+	}
+
+	s.ollamaModule = ollamamodule.New()
+	if err := modules.RegisterModule(ctx, s.ollamaModule); err != nil {
+		log.Errorf("Failed to register Ollama module: %v", err)
 	}
 
 	// Apply additional router configurators from options
@@ -1092,6 +1100,18 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 			}
 		} else {
 			log.Warnf("amp module is nil, skipping config update")
+		}
+	}
+
+	ollamaConfigChanged := oldCfg == nil || !reflect.DeepEqual(oldCfg.Ollama, cfg.Ollama)
+	if ollamaConfigChanged {
+		if s.ollamaModule != nil {
+			log.Debugf("triggering ollama module config update")
+			if err := s.ollamaModule.OnConfigUpdated(cfg); err != nil {
+				log.Errorf("failed to update Ollama module config: %v", err)
+			}
+		} else {
+			log.Warnf("ollama module is nil, skipping config update")
 		}
 	}
 

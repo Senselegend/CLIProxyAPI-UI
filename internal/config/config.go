@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"syscall"
@@ -122,6 +123,9 @@ type Config struct {
 
 	// AmpCode contains Amp CLI upstream configuration, management restrictions, and model mappings.
 	AmpCode AmpCode `yaml:"ampcode" json:"ampcode"`
+
+	// Ollama configures the Ollama-compatible facade module.
+	Ollama Ollama `yaml:"ollama" json:"ollama"`
 
 	// OAuthExcludedModels defines per-provider global model exclusions applied to OAuth/file-backed auth entries.
 	OAuthExcludedModels map[string][]string `yaml:"oauth-excluded-models,omitempty" json:"oauth-excluded-models,omitempty"`
@@ -302,6 +306,51 @@ type AmpUpstreamAPIKeyEntry struct {
 
 	// APIKeys are the client API keys (from top-level api-keys) that map to this upstream key.
 	APIKeys []string `yaml:"api-keys" json:"api-keys"`
+}
+
+// OllamaModelMapping defines an exact-match model name mapping for the Ollama-compatible module.
+type OllamaModelMapping struct {
+	From string `yaml:"from" json:"from"`
+	To   string `yaml:"to" json:"to"`
+}
+
+// Ollama groups settings for the Ollama-compatible facade module.
+type Ollama struct {
+	Enabled               bool                 `yaml:"enabled" json:"enabled"`
+	LocalhostOnly         bool                 `yaml:"localhost-only" json:"localhost-only"`
+	EmbeddingsUpstreamURL string               `yaml:"embeddings-upstream-url" json:"embeddings-upstream-url"`
+	ModelMappings         []OllamaModelMapping `yaml:"model-mappings" json:"model-mappings"`
+}
+
+func (o *Ollama) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	type rawOllama Ollama
+	raw := rawOllama{LocalhostOnly: true}
+	if err := unmarshal(&raw); err != nil {
+		return err
+	}
+	*o = Ollama(raw)
+	return nil
+}
+
+func ValidateOllamaConfig(o *Ollama) error {
+	if o == nil {
+		return nil
+	}
+	raw := strings.TrimSpace(o.EmbeddingsUpstreamURL)
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("ollama embeddings-upstream-url: parse: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("ollama embeddings-upstream-url: scheme must be http or https, got %q", u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("ollama embeddings-upstream-url: host is empty")
+	}
+	return nil
 }
 
 // PayloadConfig defines default and override parameter rules applied to provider payloads.
@@ -703,6 +752,10 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 
 	// Validate raw payload rules and drop invalid entries.
 	cfg.SanitizePayloadRules()
+
+	if err := ValidateOllamaConfig(&cfg.Ollama); err != nil {
+		return nil, err
+	}
 
 	// NOTE: Legacy migration persistence is intentionally disabled together with
 	// startup legacy migration to keep startup read-only for config.yaml.

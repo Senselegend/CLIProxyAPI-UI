@@ -309,6 +309,19 @@ nonstream-keepalive-interval: 0
 #     - from: "claude-haiku-4-5-20251001"
 #       to: "gemini-2.5-flash"
 
+# Ollama-compatible facade for local Ollama clients such as Jarvis.
+# Routes /api/chat through the proxy's OpenAI-compatible backend and keeps /api/embeddings on local Ollama.
+# Ollama routes intentionally do not require Authorization; keep localhost-only enabled for local clients.
+# ollama:
+#   enabled: true
+#   localhost-only: true
+#   embeddings-upstream-url: "http://127.0.0.1:11434"
+#   model-mappings:
+#     - from: "gemma4:e2b"                    # Model requested by the Ollama client
+#       to: "kimi-k2-0905-preview"            # Model sent to /v1/chat/completions
+#     - from: "gpt-oss:20b"
+#       to: "claude-sonnet-4-6"
+
 # Global OAuth model name aliases (per channel)
 # These aliases rename model IDs for both model listing and request routing.
 # Supported channels: gemini-cli, vertex, aistudio, antigravity, claude, codex, kimi.
