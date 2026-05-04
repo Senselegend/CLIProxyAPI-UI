@@ -1,6 +1,8 @@
 package ollama
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -18,11 +20,13 @@ func TagsHandler(mapper *ModelMapper) gin.HandlerFunc {
 		models := make([]gin.H, 0)
 		for _, mapping := range mapper.Mappings() {
 			models = append(models, gin.H{
-				"name":        mapping.From,
-				"model":       mapping.From,
-				"modified_at": "1970-01-01T00:00:00Z",
-				"size":        0,
-				"digest":      "",
+				"name":         mapping.From,
+				"model":        mapping.From,
+				"modified_at":  "1970-01-01T00:00:00Z",
+				"size":         0,
+				"digest":       ollamaCompatDigest(mapping.From),
+				"remote_model": mapping.To,
+				"remote_host":  "",
 				"details": gin.H{
 					"parent_model":       "",
 					"format":             "gguf",
@@ -35,6 +39,11 @@ func TagsHandler(mapper *ModelMapper) gin.HandlerFunc {
 		}
 		c.JSON(http.StatusOK, gin.H{"models": models})
 	}
+}
+
+func ollamaCompatDigest(name string) string {
+	sum := sha256.Sum256([]byte(name))
+	return fmt.Sprintf("sha256:%x", sum)
 }
 
 func ShowHandler(mapper *ModelMapper) gin.HandlerFunc {
