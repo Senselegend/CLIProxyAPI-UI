@@ -135,15 +135,20 @@ case "$choice" in
     echo "--- Running with Pre-built Image ---"
     export CLI_PROXY_API_PULL_POLICY="always"
     export CLI_CONSOLE_PULL_POLICY="never"
+    export CLI_CONSOLE_PROXY_PULL_POLICY="never"
     if [[ "${WITH_USAGE}" == "true" ]]; then
       export_stats
     fi
+    echo "Building local console and protected UI proxy images..."
+    docker compose build cli-console cli-console-proxy
     docker compose up -d --remove-orphans --no-build
     if [[ "${WITH_USAGE}" == "true" ]]; then
       wait_for_service
       import_stats
     fi
-    echo "Services are starting from remote image."
+    echo "Services are starting from remote API image."
+    echo "Protected UI: http://localhost:${CONSOLE_UI_PORT:-8088}"
+    echo "Direct local console: http://127.0.0.1:8318"
     echo "Run 'docker compose logs -f' to see the logs."
     ;;
   2)
@@ -165,6 +170,8 @@ case "$choice" in
     export CLI_PROXY_API_PULL_POLICY="never"
     export CLI_CONSOLE_IMAGE="cli-console:local"
     export CLI_CONSOLE_PULL_POLICY="never"
+    export CLI_CONSOLE_PROXY_IMAGE="cli-console-proxy:local"
+    export CLI_CONSOLE_PROXY_PULL_POLICY="never"
 
     echo "Building the Docker images..."
     docker compose build \
@@ -185,6 +192,8 @@ case "$choice" in
     fi
 
     echo "Build complete. Services are starting."
+    echo "Protected UI: http://localhost:${CONSOLE_UI_PORT:-8088}"
+    echo "Direct local console: http://127.0.0.1:8318"
     echo "Run 'docker compose logs -f' to see the logs."
     ;;
   *)

@@ -46,7 +46,25 @@ services:
       CONSOLE_API_KEY: ${CONSOLE_API_KEY:-${MANAGEMENT_PASSWORD:-${CONSOLE_KEY:-my-secret-key}}}
     command: ["./cli-console", "--api", "cli-proxy-api:8317", "--config", "/CLIProxyAPI/config.yaml", "--port", "8318"]
     ports:
-      - "8318:8318"
+      - "127.0.0.1:8318:8318"
     volumes:
       - ${CLI_PROXY_CONFIG_PATH:-./config.yaml}:/CLIProxyAPI/config.yaml:ro
+    restart: unless-stopped
+
+  cli-console-proxy:
+    image: ${CLI_CONSOLE_PROXY_IMAGE:-cli-console-proxy:local}
+    pull_policy: ${CLI_CONSOLE_PROXY_PULL_POLICY:-never}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: console-proxy
+    container_name: cli-console-proxy
+    depends_on:
+      - cli-console
+    environment:
+      CONSOLE_UI_USERNAME: ${CONSOLE_UI_USERNAME:-admin}
+      CONSOLE_UI_PASSWORD: ${CONSOLE_UI_PASSWORD:-change-me}
+      CONSOLE_UI_PORT: ${CONSOLE_UI_PORT:-8088}
+    ports:
+      - "${CONSOLE_UI_PORT:-8088}:${CONSOLE_UI_PORT:-8088}"
     restart: unless-stopped

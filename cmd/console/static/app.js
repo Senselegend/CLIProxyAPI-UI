@@ -14,7 +14,7 @@
   const DEFAULT_SUMMARY_WINDOW = 'last_7_days';
   const SUMMARY_WINDOWS = new Set(['today', 'last_7_days', 'last_30_days']);
 
-  const storage = typeof localStorage !== 'undefined' && localStorage && typeof localStorage.getItem === 'function'
+  let storage = typeof localStorage !== 'undefined' && localStorage && typeof localStorage.getItem === 'function'
     ? localStorage
     : {
         getItem() { return null; },
@@ -190,20 +190,36 @@
   }
 
   // Load saved API key and check config
+  function getBrowserManagementKey() {
+    const key = state.apiKey || storage.getItem('dashboard-api-key');
+    if (!key || key === 'auto') {
+      return '';
+    }
+    return key;
+  }
+
+  function applyBrowserManagementKey(headers = {}) {
+    const key = getBrowserManagementKey();
+    if (key) {
+      headers['X-Management-Key'] = key;
+    }
+    return headers;
+  }
+
   async function loadApiKey() {
-    // Check if key is required
+    let autoConfigured = false;
+
     try {
       const res = await fetch('/api/status');
       const data = await res.json();
       if (!data.keyRequired) {
-        // Key is auto-loaded from config, no input needed
-        // But we need to signal that API has a key
-        // The console server passes the key to API, so we just need to mark it as available
+        autoConfigured = true;
         state.apiKey = 'auto';
         storage.setItem('dashboard-api-key', 'auto');
 
         const input = document.getElementById('api-key-input');
         if (input) {
+          input.value = '';
           input.placeholder = 'Auto-configured';
           input.disabled = true;
           input.style.opacity = '0.5';
@@ -211,10 +227,11 @@
       }
     } catch (e) {}
 
-    // Load saved key from localStorage
-    const savedKey = storage.getItem('dashboard-api-key');
-    if (savedKey && savedKey !== 'auto') {
-      state.apiKey = savedKey;
+    if (!autoConfigured) {
+      const savedKey = storage.getItem('dashboard-api-key');
+      if (savedKey && savedKey !== 'auto') {
+        state.apiKey = savedKey;
+      }
     }
 
     const input = document.getElementById('api-key-input');
@@ -480,13 +497,7 @@
 
   // API calls
   async function apiFetch(endpoint, options = {}) {
-    const headers = { 'Content-Type': 'application/json' };
-    // Use saved key, state key, or localStorage key
-    // But don't send 'auto' - the console server handles auth automatically
-    let key = state.apiKey || storage.getItem('dashboard-api-key');
-    if (key && key !== 'auto') {
-      headers['X-Management-Key'] = key;
-    }
+    const headers = applyBrowserManagementKey({ 'Content-Type': 'application/json' });
     try {
       const res = await fetch(`${API_BASE}${endpoint}`, {
         ...options,
@@ -506,11 +517,7 @@
   }
 
   async function fetchConfigYAMLText() {
-    const headers = {};
-    const key = state.apiKey || storage.getItem('dashboard-api-key');
-    if (key && key !== 'auto') {
-      headers['X-Management-Key'] = key;
-    }
+    const headers = applyBrowserManagementKey({});
     try {
       const res = await fetch(`${API_BASE}/config.yaml`, { headers });
       if (!res.ok) throw new Error(`config fetch failed: ${res.status}`);
@@ -522,11 +529,7 @@
   }
 
   async function saveConfigYAMLText(text) {
-    const headers = { 'Content-Type': 'application/yaml' };
-    const key = state.apiKey || storage.getItem('dashboard-api-key');
-    if (key && key !== 'auto') {
-      headers['X-Management-Key'] = key;
-    }
+    const headers = applyBrowserManagementKey({ 'Content-Type': 'application/yaml' });
     const res = await fetch(`${API_BASE}/config.yaml`, {
       method: 'PUT',
       headers,
@@ -1854,7 +1857,7 @@
 
       const res = await fetch('/v0/management/auth-files', {
         method: 'POST',
-        headers: { 'X-Management-Key': state.apiKey },
+        headers: applyBrowserManagementKey({}),
         body: formData
       });
 
@@ -2539,6 +2542,7 @@
       clearInterval(startupSyncPollTimer);
       startupSyncPollTimer = null;
     }
+    state.apiKey = '';
     state.quotaStartupSync = null;
     state.quotaSummary = null;
     state.accounts = [];
@@ -2546,6 +2550,14 @@
     state.logs = [];
     state.logVisibleCount = LOGS_PAGE_SIZE;
     lastLogsFilterSignature = '';
+  }
+
+  function setStorageForTest(nextStorage) {
+    storage = nextStorage || {
+      getItem() { return null; },
+      setItem() {},
+      removeItem() {},
+    };
   }
 
   if (typeof module !== 'undefined' && module.exports) {
@@ -2576,6 +2588,9 @@
       renderSummaryCards,
       setSummaryWindow,
       buildOAuthAuthURLRequest,
+      loadApiKeyForTest: loadApiKey,
+      getBrowserManagementKeyForTest: getBrowserManagementKey,
+      setStorageForTest,
       startLiveRefreshForTest: startLiveRefresh,
     };
   }

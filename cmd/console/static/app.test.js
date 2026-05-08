@@ -28,6 +28,9 @@ const {
   renderSummaryCards,
   setSummaryWindow,
   buildOAuthAuthURLRequest,
+  loadApiKeyForTest,
+  getBrowserManagementKeyForTest,
+  setStorageForTest,
   startLiveRefreshForTest,
 } = require('./app.js');
 
@@ -143,6 +146,7 @@ function createDocumentStub() {
   register('metric-errors-window');
   register('active-accounts-count');
   register('refresh-btn');
+  register('api-key-input');
   register('quota-5h-percent');
   register('quota-5h-remaining');
   register('quota-5h-ring', { ...createElementStub('quota-5h-ring'), style: {}, getAttribute(name) { return name === 'r' ? '45' : null; } });
@@ -935,6 +939,61 @@ test('buildDashboardUsage keeps fresh summary when new snapshot has meaningful v
 
   assert.equal(usage.summary.lifetime.requests, 10);
   assert.equal(usage.summary.today.tokens, 20);
+});
+
+test('loadApiKey keeps auto mode when stale localStorage key exists', async () => {
+  global.document = createDocumentStub();
+  setStorageForTest({
+    getItem(key) {
+      if (key === 'dashboard-api-key') return 'stale-key';
+      return null;
+    },
+    setItem() {},
+    removeItem() {},
+  });
+  global.fetch = async (url) => {
+    assert.equal(String(url), '/api/status');
+    return { json: async () => ({ keyRequired: false }) };
+  };
+
+  try {
+    await loadApiKeyForTest();
+    const input = document.getElementById('api-key-input');
+    assert.equal(input.disabled, true);
+    assert.equal(input.placeholder, 'Auto-configured');
+    assert.equal(input.value, '');
+    assert.equal(getBrowserManagementKeyForTest(), '');
+  } finally {
+    delete global.fetch;
+    delete global.document;
+    setStorageForTest(null);
+    resetDashboardStateForTest();
+  }
+});
+
+test('loadApiKey restores manual mode when auto key is unavailable', async () => {
+  global.document = createDocumentStub();
+  setStorageForTest({
+    getItem(key) {
+      if (key === 'dashboard-api-key') return 'manual-key';
+      return null;
+    },
+    setItem() {},
+    removeItem() {},
+  });
+  global.fetch = async () => ({ json: async () => ({ keyRequired: true }) });
+
+  try {
+    await loadApiKeyForTest();
+    const input = document.getElementById('api-key-input');
+    assert.equal(input.value, 'manual-key');
+    assert.equal(getBrowserManagementKeyForTest(), 'manual-key');
+  } finally {
+    delete global.fetch;
+    delete global.document;
+    setStorageForTest(null);
+    resetDashboardStateForTest();
+  }
 });
 
 test('buildOAuthAuthURLRequest marks Codex dashboard OAuth as WebUI flow', () => {
