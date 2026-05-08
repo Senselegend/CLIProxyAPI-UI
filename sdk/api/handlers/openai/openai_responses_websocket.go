@@ -79,6 +79,7 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 	var lastRequest []byte
 	lastResponseOutput := []byte("[]")
 	pinnedAuthID := ""
+	forceTranscriptReplayNextRequest := false
 
 	for {
 		msgType, payload, errReadMessage := conn.ReadMessage()
@@ -114,6 +115,9 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 				requestModelName = strings.TrimSpace(gjson.GetBytes(lastRequest, "model").String())
 			}
 			allowIncrementalInputWithPreviousResponseID = h.websocketUpstreamSupportsIncrementalInputForModel(requestModelName)
+		}
+		if forceTranscriptReplayNextRequest {
+			allowIncrementalInputWithPreviousResponseID = false
 		}
 
 		var requestJSON []byte
@@ -165,7 +169,13 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 
 		requestJSON = repairResponsesWebsocketToolCalls(downstreamSessionKey, requestJSON)
 		updatedLastRequest = bytes.Clone(requestJSON)
+		previousLastRequest := bytes.Clone(lastRequest)
+		previousLastResponseOutput := bytes.Clone(lastResponseOutput)
+		forcedTranscriptReplay := forceTranscriptReplayNextRequest
 		lastRequest = updatedLastRequest
+		if forcedTranscriptReplay {
+			forceTranscriptReplayNextRequest = false
+		}
 
 		modelName := gjson.GetBytes(requestJSON, "model").String()
 		cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
@@ -190,11 +200,18 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 		}
 		dataChan, _, errChan := h.ExecuteStreamWithAuthManager(cliCtx, h.HandlerType(), modelName, requestJSON, "")
 
-		completedOutput, errForward := h.forwardResponsesWebsocket(c, conn, cliCancel, dataChan, errChan, &wsTimelineLog, passthroughSessionID)
+		completedOutput, forwardErrMsg, errForward := h.forwardResponsesWebsocket(c, conn, cliCancel, dataChan, errChan, &wsTimelineLog, passthroughSessionID)
 		if errForward != nil {
 			wsTerminateErr = errForward
 			log.Warnf("responses websocket: forward failed id=%s error=%v", passthroughSessionID, errForward)
 			return
+		}
+		if shouldReleaseResponsesWebsocketPinnedAuth(forwardErrMsg) {
+			pinnedAuthID = ""
+			forceTranscriptReplayNextRequest = true
+			lastRequest = previousLastRequest
+			lastResponseOutput = previousLastResponseOutput
+			continue
 		}
 		lastResponseOutput = completedOutput
 	}
@@ -315,20 +332,32 @@ func normalizeResponseSubsequentRequest(rawJSON []byte, lastRequest []byte, last
 		}
 	}
 
-	existingInput := gjson.GetBytes(lastRequest, "input")
-	mergedInput, errMerge := mergeJSONArrayRaw(existingInput.Raw, normalizeJSONArrayRaw(lastResponseOutput))
-	if errMerge != nil {
-		return nil, lastRequest, &interfaces.ErrorMessage{
-			StatusCode: http.StatusBadRequest,
-			Error:      fmt.Errorf("invalid previous response output: %w", errMerge),
+	// When the client sends a full conversation transcript (e.g. after compact),
+	// the input already contains the complete history including assistant messages.
+	// In that case, skip merging with stale lastRequest/lastResponseOutput to avoid
+	// breaking function_call / function_call_output pairings.
+	// See: https://github.com/router-for-me/CLIProxyAPI/issues/2207
+	var mergedInput string
+	if inputContainsFullTranscript(nextInput) {
+		log.Infof("responses websocket: full transcript detected, skipping stale merge (input items=%d)", len(nextInput.Array()))
+		mergedInput = nextInput.Raw
+	} else {
+		existingInput := gjson.GetBytes(lastRequest, "input")
+		var errMerge error
+		mergedInput, errMerge = mergeJSONArrayRaw(existingInput.Raw, normalizeJSONArrayRaw(lastResponseOutput))
+		if errMerge != nil {
+			return nil, lastRequest, &interfaces.ErrorMessage{
+				StatusCode: http.StatusBadRequest,
+				Error:      fmt.Errorf("invalid previous response output: %w", errMerge),
+			}
 		}
-	}
 
-	mergedInput, errMerge = mergeJSONArrayRaw(mergedInput, nextInput.Raw)
-	if errMerge != nil {
-		return nil, lastRequest, &interfaces.ErrorMessage{
-			StatusCode: http.StatusBadRequest,
-			Error:      fmt.Errorf("invalid request input: %w", errMerge),
+		mergedInput, errMerge = mergeJSONArrayRaw(mergedInput, nextInput.Raw)
+		if errMerge != nil {
+			return nil, lastRequest, &interfaces.ErrorMessage{
+				StatusCode: http.StatusBadRequest,
+				Error:      fmt.Errorf("invalid request input: %w", errMerge),
+			}
 		}
 	}
 	dedupedInput, errDedupeFunctionCalls := dedupeFunctionCallsByCallID(mergedInput)
@@ -691,6 +720,36 @@ func mergeJSONArrayRaw(existingRaw, appendRaw string) (string, error) {
 	return string(out), nil
 }
 
+// inputContainsFullTranscript returns true when the input array looks like a
+// complete conversation history rather than an incremental append.  After a
+// client-side compact the input already carries the full (compacted) transcript
+// which may include assistant messages or compaction items.  Merging that with
+// the stale lastRequest / lastResponseOutput would duplicate or break
+// function_call / function_call_output pairings, so the caller should use the
+// input as-is.
+//
+// Heuristic: the array is a full transcript when it contains either
+//   - a message with role="assistant", or
+//   - a compaction item (type="compaction" or "compaction_summary").
+//
+// Normal incremental turns only contain user messages or function_call_output
+// items and never carry either of these signals.
+func inputContainsFullTranscript(input gjson.Result) bool {
+	if !input.IsArray() {
+		return false
+	}
+	for _, item := range input.Array() {
+		t := item.Get("type").String()
+		if t == "message" && item.Get("role").String() == "assistant" {
+			return true
+		}
+		if t == "compaction" || t == "compaction_summary" {
+			return true
+		}
+	}
+	return false
+}
+
 func normalizeJSONArrayRaw(raw []byte) string {
 	trimmed := strings.TrimSpace(string(raw))
 	if trimmed == "" {
@@ -711,7 +770,7 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 	errs <-chan *interfaces.ErrorMessage,
 	wsTimelineLog *strings.Builder,
 	sessionID string,
-) ([]byte, error) {
+) ([]byte, *interfaces.ErrorMessage, error) {
 	completed := false
 	completedOutput := []byte("[]")
 	downstreamSessionKey := ""
@@ -723,7 +782,7 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 		select {
 		case <-c.Request.Context().Done():
 			cancel(c.Request.Context().Err())
-			return completedOutput, c.Request.Context().Err()
+			return completedOutput, nil, c.Request.Context().Err()
 		case errMsg, ok := <-errs:
 			if !ok {
 				errs = nil
@@ -748,7 +807,7 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 					// 	errWrite,
 					// )
 					cancel(errMsg.Error)
-					return completedOutput, errWrite
+					return completedOutput, errMsg, errWrite
 				}
 			}
 			if errMsg != nil {
@@ -756,7 +815,7 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 			} else {
 				cancel(nil)
 			}
-			return completedOutput, nil
+			return completedOutput, errMsg, nil
 		case chunk, ok := <-data:
 			if !ok {
 				if !completed {
@@ -782,13 +841,13 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 							errWrite,
 						)
 						cancel(errMsg.Error)
-						return completedOutput, errWrite
+						return completedOutput, errMsg, errWrite
 					}
 					cancel(errMsg.Error)
-					return completedOutput, nil
+					return completedOutput, errMsg, nil
 				}
 				cancel(nil)
-				return completedOutput, nil
+				return completedOutput, nil, nil
 			}
 
 			payloads := websocketJSONPayloadsFromChunk(chunk)
@@ -815,10 +874,28 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 						errWrite,
 					)
 					cancel(errWrite)
-					return completedOutput, errWrite
+					return completedOutput, nil, errWrite
 				}
 			}
 		}
+	}
+}
+
+func shouldReleaseResponsesWebsocketPinnedAuth(errMsg *interfaces.ErrorMessage) bool {
+	if errMsg == nil {
+		return false
+	}
+	status := errMsg.StatusCode
+	if status <= 0 && errMsg.Error != nil {
+		if se, ok := errMsg.Error.(interface{ StatusCode() int }); ok && se != nil {
+			status = se.StatusCode()
+		}
+	}
+	switch status {
+	case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden, http.StatusTooManyRequests:
+		return true
+	default:
+		return false
 	}
 }
 
