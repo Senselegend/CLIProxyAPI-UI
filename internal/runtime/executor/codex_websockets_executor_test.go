@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,6 +89,54 @@ func TestCodexWebsocketsExecutePreservesPreviousResponseIDUpstream(t *testing.T)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for upstream websocket payload")
+	}
+}
+
+func TestCodexWebsocketsUpstreamDisconnectChanSignalsOnInvalidate(t *testing.T) {
+	exec := NewCodexWebsocketsExecutor(&config.Config{})
+	sess := exec.getOrCreateSession("session-1")
+	if sess == nil {
+		t.Fatal("expected session")
+	}
+
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		_, _, _ = conn.ReadMessage()
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	sess.connMu.Lock()
+	sess.conn = conn
+	sess.readerConn = conn
+	sess.connMu.Unlock()
+
+	disconnectCh := exec.UpstreamDisconnectChan("session-1")
+	if disconnectCh == nil {
+		t.Fatal("expected upstream disconnect channel")
+	}
+
+	wantErr := context.Canceled
+	exec.invalidateUpstreamConn(sess, conn, "test_disconnect", wantErr)
+
+	select {
+	case gotErr := <-disconnectCh:
+		if gotErr == nil || gotErr.Error() != wantErr.Error() {
+			t.Fatalf("disconnect err = %v, want %v", gotErr, wantErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for upstream disconnect signal")
 	}
 }
 

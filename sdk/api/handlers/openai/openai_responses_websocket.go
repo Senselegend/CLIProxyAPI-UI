@@ -105,9 +105,11 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 		appendWebsocketTimelineEvent(&wsTimelineLog, "request", payload, time.Now())
 
 		allowIncrementalInputWithPreviousResponseID := false
+		allowCompactionReplayBypass := false
 		if pinnedAuthID != "" && h != nil && h.AuthManager != nil {
 			if pinnedAuth, ok := h.AuthManager.GetByID(pinnedAuthID); ok && pinnedAuth != nil {
 				allowIncrementalInputWithPreviousResponseID = websocketUpstreamSupportsIncrementalInput(pinnedAuth.Attributes, pinnedAuth.Metadata)
+				allowCompactionReplayBypass = websocketUpstreamSupportsIncrementalInput(pinnedAuth.Attributes, pinnedAuth.Metadata)
 			}
 		} else {
 			requestModelName := strings.TrimSpace(gjson.GetBytes(payload, "model").String())
@@ -115,9 +117,11 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 				requestModelName = strings.TrimSpace(gjson.GetBytes(lastRequest, "model").String())
 			}
 			allowIncrementalInputWithPreviousResponseID = h.websocketUpstreamSupportsIncrementalInputForModel(requestModelName)
+			allowCompactionReplayBypass = h.websocketUpstreamSupportsCompactionReplayForModel(requestModelName)
 		}
 		if forceTranscriptReplayNextRequest {
 			allowIncrementalInputWithPreviousResponseID = false
+			allowCompactionReplayBypass = false
 		}
 
 		var requestJSON []byte
@@ -128,6 +132,7 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 			lastRequest,
 			lastResponseOutput,
 			allowIncrementalInputWithPreviousResponseID,
+			allowCompactionReplayBypass,
 		)
 		if errMsg != nil {
 			h.LoggingAPIResponseError(context.WithValue(context.Background(), "gin", c), errMsg)
@@ -239,10 +244,10 @@ func websocketUpgradeHeaders(req *http.Request) http.Header {
 }
 
 func normalizeResponsesWebsocketRequest(rawJSON []byte, lastRequest []byte, lastResponseOutput []byte) ([]byte, []byte, *interfaces.ErrorMessage) {
-	return normalizeResponsesWebsocketRequestWithMode(rawJSON, lastRequest, lastResponseOutput, true)
+	return normalizeResponsesWebsocketRequestWithMode(rawJSON, lastRequest, lastResponseOutput, true, true)
 }
 
-func normalizeResponsesWebsocketRequestWithMode(rawJSON []byte, lastRequest []byte, lastResponseOutput []byte, allowIncrementalInputWithPreviousResponseID bool) ([]byte, []byte, *interfaces.ErrorMessage) {
+func normalizeResponsesWebsocketRequestWithMode(rawJSON []byte, lastRequest []byte, lastResponseOutput []byte, allowIncrementalInputWithPreviousResponseID bool, allowCompactionReplayBypass bool) ([]byte, []byte, *interfaces.ErrorMessage) {
 	requestType := strings.TrimSpace(gjson.GetBytes(rawJSON, "type").String())
 	switch requestType {
 	case wsRequestTypeCreate:
@@ -250,10 +255,10 @@ func normalizeResponsesWebsocketRequestWithMode(rawJSON []byte, lastRequest []by
 		if len(lastRequest) == 0 {
 			return normalizeResponseCreateRequest(rawJSON)
 		}
-		return normalizeResponseSubsequentRequest(rawJSON, lastRequest, lastResponseOutput, allowIncrementalInputWithPreviousResponseID)
+		return normalizeResponseSubsequentRequest(rawJSON, lastRequest, lastResponseOutput, allowIncrementalInputWithPreviousResponseID, allowCompactionReplayBypass)
 	case wsRequestTypeAppend:
 		// log.Infof("responses websocket: response.append request")
-		return normalizeResponseSubsequentRequest(rawJSON, lastRequest, lastResponseOutput, allowIncrementalInputWithPreviousResponseID)
+		return normalizeResponseSubsequentRequest(rawJSON, lastRequest, lastResponseOutput, allowIncrementalInputWithPreviousResponseID, allowCompactionReplayBypass)
 	default:
 		return nil, lastRequest, &interfaces.ErrorMessage{
 			StatusCode: http.StatusBadRequest,
@@ -282,7 +287,7 @@ func normalizeResponseCreateRequest(rawJSON []byte) ([]byte, []byte, *interfaces
 	return normalized, bytes.Clone(normalized), nil
 }
 
-func normalizeResponseSubsequentRequest(rawJSON []byte, lastRequest []byte, lastResponseOutput []byte, allowIncrementalInputWithPreviousResponseID bool) ([]byte, []byte, *interfaces.ErrorMessage) {
+func normalizeResponseSubsequentRequest(rawJSON []byte, lastRequest []byte, lastResponseOutput []byte, allowIncrementalInputWithPreviousResponseID bool, allowCompactionReplayBypass bool) ([]byte, []byte, *interfaces.ErrorMessage) {
 	if len(lastRequest) == 0 {
 		return nil, lastRequest, &interfaces.ErrorMessage{
 			StatusCode: http.StatusBadRequest,
@@ -332,11 +337,14 @@ func normalizeResponseSubsequentRequest(rawJSON []byte, lastRequest []byte, last
 		}
 	}
 
+	if inputContainsFullTranscript(nextInput) && !allowCompactionReplayBypass {
+		nextInput = inputWithoutCompactionItems(nextInput)
+	}
+
 	// When the client sends a full conversation transcript (e.g. after compact),
-	// the input already contains the complete history including assistant messages.
+	// the input already contains the complete history including compaction markers.
 	// In that case, skip merging with stale lastRequest/lastResponseOutput to avoid
 	// breaking function_call / function_call_output pairings.
-	// See: https://github.com/router-for-me/CLIProxyAPI/issues/2207
 	var mergedInput string
 	if inputContainsFullTranscript(nextInput) {
 		log.Infof("responses websocket: full transcript detected, skipping stale merge (input items=%d)", len(nextInput.Array()))
@@ -577,6 +585,59 @@ func (h *OpenAIResponsesAPIHandler) websocketUpstreamSupportsIncrementalInputFor
 	return false
 }
 
+func (h *OpenAIResponsesAPIHandler) websocketUpstreamSupportsCompactionReplayForModel(modelName string) bool {
+	auths := h.responsesWebsocketAvailableAuthsForModel(modelName)
+	if len(auths) == 0 {
+		return false
+	}
+	providerSet := make(map[string]struct{}, len(auths))
+	for _, auth := range auths {
+		providerKey := strings.TrimSpace(strings.ToLower(auth.Provider))
+		if providerKey == "" {
+			continue
+		}
+		providerSet[providerKey] = struct{}{}
+		if !websocketUpstreamSupportsIncrementalInput(auth.Attributes, auth.Metadata) {
+			return false
+		}
+	}
+	return len(providerSet) == 1
+}
+
+func (h *OpenAIResponsesAPIHandler) responsesWebsocketAvailableAuthsForModel(modelName string) []*coreauth.Auth {
+	if h == nil || h.AuthManager == nil {
+		return nil
+	}
+	resolvedModelName := strings.TrimSpace(util.ResolveAutoModel(modelName))
+	parsed := thinking.ParseSuffix(resolvedModelName)
+	baseModel := strings.TrimSpace(parsed.ModelName)
+	if baseModel == "" {
+		baseModel = strings.TrimSpace(modelName)
+	}
+	modelKey := baseModel
+	if modelKey == "" {
+		modelKey = strings.TrimSpace(resolvedModelName)
+	}
+	registryRef := registry.GetGlobalRegistry()
+	now := time.Now()
+	auths := h.AuthManager.List()
+	result := make([]*coreauth.Auth, 0, len(auths))
+	for i := 0; i < len(auths); i++ {
+		auth := auths[i]
+		if auth == nil {
+			continue
+		}
+		if modelKey != "" && registryRef != nil && !registryRef.ClientSupportsModel(auth.ID, modelKey) {
+			continue
+		}
+		if !responsesWebsocketAuthAvailableForModel(auth, modelKey, now) {
+			continue
+		}
+		result = append(result, auth)
+	}
+	return result
+}
+
 func responsesWebsocketAuthAvailableForModel(auth *coreauth.Auth, modelName string, now time.Time) bool {
 	if auth == nil {
 		return false
@@ -720,34 +781,43 @@ func mergeJSONArrayRaw(existingRaw, appendRaw string) (string, error) {
 	return string(out), nil
 }
 
-// inputContainsFullTranscript returns true when the input array looks like a
-// complete conversation history rather than an incremental append.  After a
-// client-side compact the input already carries the full (compacted) transcript
-// which may include assistant messages or compaction items.  Merging that with
-// the stale lastRequest / lastResponseOutput would duplicate or break
-// function_call / function_call_output pairings, so the caller should use the
-// input as-is.
-//
-// Heuristic: the array is a full transcript when it contains either
-//   - a message with role="assistant", or
-//   - a compaction item (type="compaction" or "compaction_summary").
-//
-// Normal incremental turns only contain user messages or function_call_output
-// items and never carry either of these signals.
+// inputContainsFullTranscript returns true when the input array contains
+// compaction markers that indicate the client already rebuilt a compacted
+// transcript locally.
 func inputContainsFullTranscript(input gjson.Result) bool {
 	if !input.IsArray() {
 		return false
 	}
 	for _, item := range input.Array() {
 		t := item.Get("type").String()
-		if t == "message" && item.Get("role").String() == "assistant" {
-			return true
-		}
 		if t == "compaction" || t == "compaction_summary" {
 			return true
 		}
 	}
 	return false
+}
+
+func inputWithoutCompactionItems(input gjson.Result) gjson.Result {
+	if !input.IsArray() {
+		return input
+	}
+	items := input.Array()
+	var filtered strings.Builder
+	filtered.WriteByte('[')
+	count := 0
+	for _, item := range items {
+		t := strings.TrimSpace(item.Get("type").String())
+		if t == "compaction" || t == "compaction_summary" {
+			continue
+		}
+		if count > 0 {
+			filtered.WriteByte(',')
+		}
+		filtered.WriteString(item.Raw)
+		count++
+	}
+	filtered.WriteByte(']')
+	return gjson.Parse(filtered.String())
 }
 
 func normalizeJSONArrayRaw(raw []byte) string {

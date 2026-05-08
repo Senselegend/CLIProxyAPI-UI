@@ -75,6 +75,9 @@ type codexWebsocketSession struct {
 	activeDone   <-chan struct{}
 	activeCancel context.CancelFunc
 
+	upstreamDisconnectOnce sync.Once
+	upstreamDisconnectCh   chan error
+
 	readerConn *websocket.Conn
 }
 
@@ -1212,7 +1215,10 @@ func (e *CodexWebsocketsExecutor) getOrCreateSession(sessionID string) *codexWeb
 	if sess, ok := store.sessions[sessionID]; ok && sess != nil {
 		return sess
 	}
-	sess := &codexWebsocketSession{sessionID: sessionID}
+	sess := &codexWebsocketSession{
+		sessionID:            sessionID,
+		upstreamDisconnectCh: make(chan error, 1),
+	}
 	store.sessions[sessionID] = sess
 	return sess
 }
@@ -1324,6 +1330,27 @@ func (e *CodexWebsocketsExecutor) readUpstreamLoop(sess *codexWebsocketSession, 
 	}
 }
 
+func (s *codexWebsocketSession) notifyUpstreamDisconnect(err error) {
+	if s == nil || s.upstreamDisconnectCh == nil {
+		return
+	}
+	s.upstreamDisconnectOnce.Do(func() {
+		s.upstreamDisconnectCh <- err
+		close(s.upstreamDisconnectCh)
+	})
+}
+
+func (e *CodexWebsocketsExecutor) UpstreamDisconnectChan(sessionID string) <-chan error {
+	if e == nil {
+		return nil
+	}
+	sess := e.getOrCreateSession(sessionID)
+	if sess == nil {
+		return nil
+	}
+	return sess.upstreamDisconnectCh
+}
+
 func (e *CodexWebsocketsExecutor) invalidateUpstreamConn(sess *codexWebsocketSession, conn *websocket.Conn, reason string, err error) {
 	if sess == nil || conn == nil {
 		return
@@ -1345,6 +1372,7 @@ func (e *CodexWebsocketsExecutor) invalidateUpstreamConn(sess *codexWebsocketSes
 	sess.connMu.Unlock()
 
 	logCodexWebsocketDisconnected(sessionID, authID, wsURL, reason, err)
+	sess.notifyUpstreamDisconnect(err)
 	if errClose := conn.Close(); errClose != nil {
 		log.Errorf("codex websockets executor: close websocket error: %v", errClose)
 	}
@@ -1581,6 +1609,13 @@ func (e *CodexAutoExecutor) CloseExecutionSession(sessionID string) {
 		return
 	}
 	e.wsExec.CloseExecutionSession(sessionID)
+}
+
+func (e *CodexAutoExecutor) UpstreamDisconnectChan(sessionID string) <-chan error {
+	if e == nil || e.wsExec == nil {
+		return nil
+	}
+	return e.wsExec.UpstreamDisconnectChan(sessionID)
 }
 
 func codexWebsocketsEnabled(auth *cliproxyauth.Auth) bool {

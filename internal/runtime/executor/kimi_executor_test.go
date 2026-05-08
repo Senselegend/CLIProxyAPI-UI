@@ -203,3 +203,52 @@ func TestNormalizeKimiToolMessageLinks_RepairsIDsAndReasoningTogether(t *testing
 		t.Fatalf("messages.2.reasoning_content = %q, want %q", got, "r1")
 	}
 }
+
+func TestNormalizeKimiToolMessageLinks_DropsEmptyAssistantWithoutToolLink(t *testing.T) {
+	body := []byte(`{
+		"messages":[
+			{"role":"assistant","content":""},
+			{"role":"user","content":"keep"},
+			{"role":"assistant","content":[{"type":"text","text":"   "}]}
+		]
+	}`)
+
+	out, err := normalizeKimiToolMessageLinks(body)
+	if err != nil {
+		t.Fatalf("normalizeKimiToolMessageLinks() error = %v", err)
+	}
+
+	messages := gjson.GetBytes(out, "messages").Array()
+	if len(messages) != 1 {
+		t.Fatalf("messages length = %d, want 1; body=%s", len(messages), out)
+	}
+	if got := messages[0].Get("role").String(); got != "user" {
+		t.Fatalf("remaining message role = %q, want %q", got, "user")
+	}
+}
+
+func TestNormalizeKimiToolMessageLinks_PreservesAssistantWithToolLinkOrReasoning(t *testing.T) {
+	body := []byte(`{
+		"messages":[
+			{"role":"assistant","content":"","reasoning_content":"keep reasoning"},
+			{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"content":""},
+			{"role":"tool","call_id":"call_1","content":"[]"}
+		]
+	}`)
+
+	out, err := normalizeKimiToolMessageLinks(body)
+	if err != nil {
+		t.Fatalf("normalizeKimiToolMessageLinks() error = %v", err)
+	}
+
+	messages := gjson.GetBytes(out, "messages").Array()
+	if len(messages) != 3 {
+		t.Fatalf("messages length = %d, want 3; body=%s", len(messages), out)
+	}
+	if got := messages[0].Get("reasoning_content").String(); got != "keep reasoning" {
+		t.Fatalf("messages.0.reasoning_content = %q, want %q", got, "keep reasoning")
+	}
+	if got := messages[1].Get("tool_calls.0.id").String(); got != "call_1" {
+		t.Fatalf("messages.1.tool_calls.0.id = %q, want %q", got, "call_1")
+	}
+}
