@@ -1317,6 +1317,27 @@ body::after {
 .oauth-status.success { background: var(--signal-soft); color: var(--signal); }
 .oauth-status.error { background: var(--danger-soft); color: var(--danger); }
 
+.oauth-manual-callback {
+  margin-top: 18px;
+  text-align: left;
+}
+
+.oauth-callback-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.oauth-callback-row .form-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.oauth-callback-row .btn {
+  justify-content: center;
+  white-space: nowrap;
+}
+
 /* Form */
 .form-group { margin-bottom: 18px; }
 
@@ -1591,6 +1612,8 @@ body::after {
   .setting-row { flex-direction: column; gap: 12px; }
   .setting-info { margin-right: 0; }
   .setting-input.wide { width: 100%; }
+  .oauth-callback-row { flex-direction: column; }
+  .oauth-callback-row .btn { width: 100%; }
 }
 
 /* Tab content */

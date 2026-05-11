@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 )
@@ -58,6 +59,34 @@ func TestGenerateAuthURLUsesRegisteredCodexRedirectURI(t *testing.T) {
 	}
 	if !strings.Contains(authURL, "redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback") {
 		t.Fatalf("auth URL = %s, want registered Codex redirect URI on port 1455", authURL)
+	}
+}
+
+func TestExchangeCodeForTokensUsesCredentialTimeout(t *testing.T) {
+	oldTimeout := credentialRequestTimeout
+	credentialRequestTimeout = 10 * time.Millisecond
+	t.Cleanup(func() {
+		credentialRequestTimeout = oldTimeout
+	})
+
+	auth := &CodexAuth{
+		httpClient: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				<-req.Context().Done()
+				return nil, req.Context().Err()
+			}),
+		},
+	}
+
+	_, err := auth.ExchangeCodeForTokensWithRedirect(context.Background(), "code", RedirectURI, &PKCECodes{
+		CodeVerifier:  "verifier",
+		CodeChallenge: "challenge",
+	})
+	if err == nil {
+		t.Fatal("expected credential timeout error")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "context deadline") {
+		t.Fatalf("expected context deadline error, got: %v", err)
 	}
 }
 

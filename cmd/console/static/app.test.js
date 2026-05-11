@@ -28,6 +28,8 @@ const {
   renderSummaryCards,
   setSummaryWindow,
   buildOAuthAuthURLRequest,
+  buildOAuthCallbackRequest,
+  normalizeOAuthCallbackProvider,
   loadApiKeyForTest,
   getBrowserManagementKeyForTest,
   setStorageForTest,
@@ -999,6 +1001,19 @@ test('loadApiKey restores manual mode when auto key is unavailable', async () =>
 test('buildOAuthAuthURLRequest marks Codex dashboard OAuth as WebUI flow', () => {
   assert.equal(buildOAuthAuthURLRequest('codex'), '/codex-auth-url?is_webui=true');
   assert.equal(buildOAuthAuthURLRequest('anthropic'), '/anthropic-auth-url');
+});
+
+test('buildOAuthCallbackRequest trims callback URL and normalizes provider aliases', () => {
+  assert.deepEqual(
+    buildOAuthCallbackRequest('openai', '  http://localhost:1455/auth/callback?code=abc&state=xyz  ', ' xyz '),
+    {
+      provider: 'codex',
+      redirect_url: 'http://localhost:1455/auth/callback?code=abc&state=xyz',
+      state: 'xyz'
+    },
+  );
+  assert.equal(normalizeOAuthCallbackProvider('claude'), 'anthropic');
+  assert.equal(normalizeOAuthCallbackProvider('google'), 'gemini');
 });
 
 test('getInitialSummaryWindow defaults to last_7_days and restores valid saved value', () => {

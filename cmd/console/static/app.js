@@ -11,6 +11,9 @@
   const RECOVERY_POLL_DELAY_MS = 2000;
   const HARD_REFRESH_DOUBLE_CLICK_WINDOW_MS = 1500;
   const LIVE_REFRESH_INTERVAL_MS = 60000;
+  const OAUTH_FLOW_TIMEOUT_MS = 8 * 60 * 1000;
+  const OAUTH_POPUP_POLL_INTERVAL_MS = 1000;
+  const OAUTH_STATUS_POLL_INTERVAL_MS = 2000;
   const DEFAULT_SUMMARY_WINDOW = 'last_7_days';
   const SUMMARY_WINDOWS = new Set(['today', 'last_7_days', 'last_30_days']);
 
@@ -145,18 +148,16 @@
   }
 
   async function pollForAuthComplete() {
-    const maxAttempts = 30; // 30 * 2s = 60 seconds
-    let attempts = 0;
+    if (!oauthPollStartedAt) oauthPollStartedAt = Date.now();
 
     const poll = async () => {
-      if (attempts >= maxAttempts) {
+      if (Date.now() - oauthPollStartedAt >= OAUTH_FLOW_TIMEOUT_MS) {
         showToast('OAuth timeout', 'error');
         closeModal();
         return;
       }
-      attempts++;
 
-      console.log('Polling auth status, attempt:', attempts, 'state:', oauthState);
+      console.log('Polling auth status, state:', oauthState);
       const data = await apiFetch('/get-auth-status?state=' + encodeURIComponent(oauthState));
       console.log('Auth status response:', data);
 
@@ -172,7 +173,7 @@
       }
 
       // Continue polling
-      setTimeout(poll, 2000);
+      setTimeout(poll, OAUTH_STATUS_POLL_INTERVAL_MS);
     };
 
     poll();
@@ -420,6 +421,17 @@
       const flow = document.getElementById('apikey-flow');
       if (flow) flow.style.display = 'block';
     });
+    const oauthCallbackSubmit = document.getElementById('oauth-callback-submit');
+    const oauthCallbackInput = document.getElementById('oauth-callback-url');
+    if (oauthCallbackSubmit && oauthCallbackInput) {
+      oauthCallbackSubmit.addEventListener('click', submitOAuthCallbackURL);
+      oauthCallbackInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          submitOAuthCallbackURL();
+        }
+      });
+    }
 
     // Account search
     const accountsSearchInput = document.getElementById('accounts-search');
@@ -1647,6 +1659,7 @@
     modalStep = 1;
     selectedProvider = null;
     oauthState = null;
+    oauthPollStartedAt = 0;
 
     document.querySelectorAll('.modal-step').forEach((s, i) => {
       s.classList.toggle('active', i === 0);
@@ -1673,6 +1686,8 @@
     document.getElementById('apikey-flow').classList.remove('visible');
     document.getElementById('api-key-form').value = '';
     document.getElementById('api-key-label').value = '';
+    const callbackURLInput = document.getElementById('oauth-callback-url');
+    if (callbackURLInput) callbackURLInput.value = '';
     const statusEl = document.getElementById('oauth-status');
     if (statusEl) statusEl.style.display = 'none';
   }
@@ -1747,13 +1762,33 @@
 
   let oauthState = null;
   let oauthPopup = null;
+  let oauthPollStartedAt = 0;
 
   function buildOAuthAuthURLRequest(provider) {
     const base = '/' + provider + '-auth-url';
     return provider === 'codex' ? base + '?is_webui=true' : base;
   }
 
+  function normalizeOAuthCallbackProvider(provider) {
+    const value = String(provider || '').trim().toLowerCase();
+    if (value === 'openai') return 'codex';
+    if (value === 'claude') return 'anthropic';
+    if (value === 'google') return 'gemini';
+    return value;
+  }
+
+  function buildOAuthCallbackRequest(provider, redirectURL, stateValue) {
+    return {
+      provider: normalizeOAuthCallbackProvider(provider),
+      redirect_url: String(redirectURL || '').trim(),
+      state: String(stateValue || '').trim()
+    };
+  }
+
   async function startOAuthFlow() {
+    oauthPollStartedAt = Date.now();
+    const callbackURLInput = document.getElementById('oauth-callback-url');
+    if (callbackURLInput) callbackURLInput.value = '';
     const statusEl = document.getElementById('oauth-status');
     statusEl.style.display = 'block';
     statusEl.className = 'oauth-status pending';
@@ -1789,7 +1824,59 @@
     }
   }
 
+  async function submitOAuthCallbackURL() {
+    const input = document.getElementById('oauth-callback-url');
+    const submit = document.getElementById('oauth-callback-submit');
+    const statusEl = document.getElementById('oauth-status');
+    const callbackURL = input ? input.value.trim() : '';
+
+    if (!callbackURL) {
+      showToast('Paste callback URL', 'error');
+      return;
+    }
+    if (!oauthState) {
+      showToast('OAuth session not found', 'error');
+      return;
+    }
+
+    if (submit) submit.disabled = true;
+    if (statusEl) {
+      statusEl.style.display = 'block';
+      statusEl.className = 'oauth-status pending';
+      statusEl.textContent = 'Submitting callback...';
+    }
+
+    const data = await apiFetch('/oauth-callback', {
+      method: 'POST',
+      body: JSON.stringify(buildOAuthCallbackRequest(selectedProvider, callbackURL, oauthState))
+    });
+
+    if (submit) submit.disabled = false;
+    if (!data || data.status !== 'ok') {
+      if (statusEl) {
+        statusEl.className = 'oauth-status error';
+        statusEl.textContent = 'Callback submit failed';
+      }
+      showToast('Callback submit failed', 'error');
+      return;
+    }
+
+    if (statusEl) {
+      statusEl.className = 'oauth-status pending';
+      statusEl.textContent = 'Processing authorization...';
+    }
+    showToast('Callback received', 'info');
+    pollForAuthComplete();
+  }
+
   function pollOAuthPopup() {
+    if (oauthPollStartedAt && Date.now() - oauthPollStartedAt >= OAUTH_FLOW_TIMEOUT_MS) {
+      oauthPopup?.close();
+      showToast('OAuth timeout', 'error');
+      closeModal();
+      return;
+    }
+
     if (!oauthPopup || oauthPopup.closed) {
       if (oauthState) {
         pollForAuthComplete();
@@ -1823,11 +1910,11 @@
           showToast('OAuth error: ' + (data.error || 'Unknown'), 'error');
           closeModal();
         } else {
-          setTimeout(pollOAuthPopup, 1000);
+          setTimeout(pollOAuthPopup, OAUTH_POPUP_POLL_INTERVAL_MS);
         }
       })
       .catch(() => {
-        setTimeout(pollOAuthPopup, 1000);
+        setTimeout(pollOAuthPopup, OAUTH_POPUP_POLL_INTERVAL_MS);
       });
   }
 
@@ -2588,6 +2675,8 @@
       renderSummaryCards,
       setSummaryWindow,
       buildOAuthAuthURLRequest,
+      buildOAuthCallbackRequest,
+      normalizeOAuthCallbackProvider,
       loadApiKeyForTest: loadApiKey,
       getBrowserManagementKeyForTest: getBrowserManagementKey,
       setStorageForTest,

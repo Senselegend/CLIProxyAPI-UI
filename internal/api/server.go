@@ -416,7 +416,10 @@ func (s *Server) setupRoutes() {
 			errStr = c.Query("error_description")
 		}
 		if state != "" {
-			_, _ = managementHandlers.WriteOAuthCallbackFileForPendingSession(s.cfg.AuthDir, "anthropic", state, code, errStr)
+			if _, errWrite := managementHandlers.WriteOAuthCallbackFileForPendingSession(s.cfg.AuthDir, "anthropic", state, code, errStr); errWrite != nil {
+				log.WithError(errWrite).Warn("failed to persist anthropic oauth callback")
+				managementHandlers.SetOAuthSessionError(state, "Failed to persist OAuth callback")
+			}
 		}
 		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.String(http.StatusOK, oauthCallbackSuccessHTML)
@@ -430,7 +433,10 @@ func (s *Server) setupRoutes() {
 			errStr = c.Query("error_description")
 		}
 		if state != "" {
-			_, _ = managementHandlers.WriteOAuthCallbackFileForPendingSession(s.cfg.AuthDir, "codex", state, code, errStr)
+			if _, errWrite := managementHandlers.WriteOAuthCallbackFileForPendingSession(s.cfg.AuthDir, "codex", state, code, errStr); errWrite != nil {
+				log.WithError(errWrite).Warn("failed to persist codex oauth callback")
+				managementHandlers.SetOAuthSessionError(state, "Failed to persist OAuth callback")
+			}
 		}
 		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.String(http.StatusOK, oauthCallbackSuccessHTML)
@@ -444,7 +450,10 @@ func (s *Server) setupRoutes() {
 			errStr = c.Query("error_description")
 		}
 		if state != "" {
-			_, _ = managementHandlers.WriteOAuthCallbackFileForPendingSession(s.cfg.AuthDir, "gemini", state, code, errStr)
+			if _, errWrite := managementHandlers.WriteOAuthCallbackFileForPendingSession(s.cfg.AuthDir, "gemini", state, code, errStr); errWrite != nil {
+				log.WithError(errWrite).Warn("failed to persist gemini oauth callback")
+				managementHandlers.SetOAuthSessionError(state, "Failed to persist OAuth callback")
+			}
 		}
 		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.String(http.StatusOK, oauthCallbackSuccessHTML)
@@ -458,7 +467,10 @@ func (s *Server) setupRoutes() {
 			errStr = c.Query("error_description")
 		}
 		if state != "" {
-			_, _ = managementHandlers.WriteOAuthCallbackFileForPendingSession(s.cfg.AuthDir, "antigravity", state, code, errStr)
+			if _, errWrite := managementHandlers.WriteOAuthCallbackFileForPendingSession(s.cfg.AuthDir, "antigravity", state, code, errStr); errWrite != nil {
+				log.WithError(errWrite).Warn("failed to persist antigravity oauth callback")
+				managementHandlers.SetOAuthSessionError(state, "Failed to persist OAuth callback")
+			}
 		}
 		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.String(http.StatusOK, oauthCallbackSuccessHTML)

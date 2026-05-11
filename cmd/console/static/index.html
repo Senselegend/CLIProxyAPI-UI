@@ -659,7 +659,7 @@
       <!-- Step 2: OAuth or API Key -->
       <div class="modal-content" id="step-content-2" style="display: none;">
         <div class="step-label">2. Choose auth method</div>
-        <div class="auth-method-choice">
+        <div class="auth-method-choice" id="auth-method-choice">
           <button class="auth-method-btn" id="auth-oauth-btn">
             <div class="auth-method-icon">
               <svg viewBox="0 0 24 24" stroke-width="2" fill="none"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
@@ -683,6 +683,13 @@
             <div class="oauth-waiting-hint">Complete OAuth in your browser</div>
           </div>
           <div class="oauth-status pending" id="oauth-status" style="display: none;"></div>
+          <div class="oauth-manual-callback">
+            <label class="form-label" for="oauth-callback-url">Callback URL</label>
+            <div class="oauth-callback-row">
+              <input type="url" class="form-input" id="oauth-callback-url" placeholder="http://localhost:1455/auth/callback?...">
+              <button type="button" class="btn" id="oauth-callback-submit">Submit</button>
+            </div>
+          </div>
         </div>
         <!-- API Key Input -->
         <div class="oauth-section" id="apikey-flow" style="display: none;">

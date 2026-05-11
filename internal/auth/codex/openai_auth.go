@@ -27,6 +27,21 @@ const (
 	RedirectURI = "http://localhost:1455/auth/callback"
 )
 
+var credentialRequestTimeout = 2 * time.Minute
+
+func withCredentialRequestTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if credentialRequestTimeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	if _, ok := ctx.Deadline(); ok {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, credentialRequestTimeout)
+}
+
 // CodexAuth handles the OpenAI OAuth2 authentication flow.
 // It manages the HTTP client and provides methods for generating authorization URLs,
 // exchanging authorization codes for tokens, and refreshing access tokens.
@@ -109,7 +124,10 @@ func (o *CodexAuth) ExchangeCodeForTokensWithRedirect(ctx context.Context, code,
 		"code_verifier": {pkceCodes.CodeVerifier},
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", TokenURL, strings.NewReader(data.Encode()))
+	reqCtx, cancel := withCredentialRequestTimeout(ctx)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, "POST", TokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create token request: %w", err)
 	}
@@ -195,7 +213,10 @@ func (o *CodexAuth) RefreshTokens(ctx context.Context, refreshToken string) (*Co
 		"scope":         {"openid profile email"},
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", TokenURL, strings.NewReader(data.Encode()))
+	reqCtx, cancel := withCredentialRequestTimeout(ctx)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, "POST", TokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create refresh request: %w", err)
 	}
