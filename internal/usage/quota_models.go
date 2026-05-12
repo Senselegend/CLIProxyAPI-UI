@@ -17,11 +17,13 @@ type QuotaWindow struct {
 // Plan credit capacities for weighted-average aggregation.
 const (
 	// Primary (5h window) capacities by plan type.
-	CapacityPrimaryPlus = 225.0
-	CapacityPrimaryPro  = 1500.0
-	// Secondary (7d window) = primary × 30 roughly.
-	CapacitySecondaryPlus = 7560.0
-	CapacitySecondaryPro  = 50400.0
+	CapacityPrimaryPlus    = 225.0
+	CapacityPrimaryProLite = CapacityPrimaryPlus * 5
+	CapacityPrimaryPro     = CapacityPrimaryPlus * 20
+	// Secondary (7d window) uses the same plan multipliers as primary.
+	CapacitySecondaryPlus    = 7560.0
+	CapacitySecondaryProLite = CapacitySecondaryPlus * 5
+	CapacitySecondaryPro     = CapacitySecondaryPlus * 20
 )
 
 // PlanCapacity returns the credit capacity for a given plan type and window.
@@ -36,25 +38,30 @@ func (w *QuotaWindow) capacity(window string, planType string) *float64 {
 	var cap float64
 	switch window {
 	case "primary":
-		switch strings.ToLower(planType) {
-		case "plus", "business", "team":
-			cap = CapacityPrimaryPlus
+		switch normalizedPlanType(planType) {
 		case "pro":
 			cap = CapacityPrimaryPro
+		case "prolite":
+			cap = CapacityPrimaryProLite
 		default:
 			cap = CapacityPrimaryPlus // conservative default
 		}
 	case "secondary":
-		switch strings.ToLower(planType) {
-		case "plus", "business", "team":
-			cap = CapacitySecondaryPlus
+		switch normalizedPlanType(planType) {
 		case "pro":
 			cap = CapacitySecondaryPro
+		case "prolite":
+			cap = CapacitySecondaryProLite
 		default:
 			cap = CapacitySecondaryPlus
 		}
 	}
 	return &cap
+}
+
+func normalizedPlanType(planType string) string {
+	replacer := strings.NewReplacer("-", "", "_", "", " ", "")
+	return replacer.Replace(strings.ToLower(strings.TrimSpace(planType)))
 }
 
 func (w *QuotaWindow) hasData() bool {

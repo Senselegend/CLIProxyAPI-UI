@@ -98,7 +98,7 @@ func TestRequestStatisticsMergeSnapshotDedupIgnoresLatency(t *testing.T) {
 func TestRequestStatisticsPersistAndLoadRoundTrip(t *testing.T) {
 	stats := NewRequestStatistics()
 	storageDir := t.TempDir()
-	now := time.Date(2026, 4, 22, 15, 0, 0, 0, time.UTC)
+	now := time.Now().UTC()
 
 	stats.Record(context.Background(), coreusage.Record{
 		Source:      "alpha@example.com",

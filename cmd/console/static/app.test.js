@@ -717,8 +717,28 @@ test('computeQuotaSummaryFromQuotas weights Pro accounts by quota capacity', () 
   ]);
 
   assert.deepEqual(summary, {
-    primary_used_percent: 13,
-    secondary_used_percent: 13,
+    primary_used_percent: 5,
+    secondary_used_percent: 5,
+  });
+});
+
+test('computeQuotaSummaryFromQuotas weights Pro Lite accounts by quota capacity', () => {
+  const summary = computeQuotaSummaryFromQuotas([
+    {
+      plan_type: 'plus',
+      primary_window: { used_percent: 100 },
+      secondary_window: { used_percent: 100 },
+    },
+    {
+      plan_type: 'Pro-Lite',
+      primary_window: { used_percent: 0 },
+      secondary_window: { used_percent: 0 },
+    },
+  ]);
+
+  assert.deepEqual(summary, {
+    primary_used_percent: 17,
+    secondary_used_percent: 17,
   });
 });
 

@@ -16,6 +16,12 @@
   const OAUTH_STATUS_POLL_INTERVAL_MS = 2000;
   const DEFAULT_SUMMARY_WINDOW = 'last_7_days';
   const SUMMARY_WINDOWS = new Set(['today', 'last_7_days', 'last_30_days']);
+  const QUOTA_PRIMARY_PLUS_CAPACITY = 225;
+  const QUOTA_SECONDARY_PLUS_CAPACITY = 7560;
+  const QUOTA_PLAN_MULTIPLIERS = {
+    pro: 20,
+    prolite: 5,
+  };
 
   let storage = typeof localStorage !== 'undefined' && localStorage && typeof localStorage.getItem === 'function'
     ? localStorage
@@ -947,11 +953,15 @@
       if (Number.isFinite(explicitCapacity) && explicitCapacity > 0) {
         return explicitCapacity;
       }
-      const normalizedPlan = String(planType || '').trim().toLowerCase();
-      if (windowName === 'primary') {
-        return normalizedPlan === 'pro' ? 1500 : 225;
-      }
-      return normalizedPlan === 'pro' ? 50400 : 7560;
+      const baseCapacity = windowName === 'primary'
+        ? QUOTA_PRIMARY_PLUS_CAPACITY
+        : QUOTA_SECONDARY_PLUS_CAPACITY;
+      return baseCapacity * quotaPlanMultiplier(planType);
+    }
+
+    function quotaPlanMultiplier(planType) {
+      const normalizedPlan = String(planType || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+      return QUOTA_PLAN_MULTIPLIERS[normalizedPlan] || 1;
     }
 
     function hasActiveExhaustedLongWindow(quota) {

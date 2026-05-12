@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -73,6 +74,53 @@ func TestAggregateQuotasIncludesValidZeroUsageSecondaryWindows(t *testing.T) {
 	got := AggregateQuotas(quotas, "secondary")
 	if got != 18.75 {
 		t.Fatalf("AggregateQuotas() = %v, want 18.75", got)
+	}
+}
+
+func TestAggregateQuotasWeightsPlanCapacities(t *testing.T) {
+	tests := []struct {
+		name     string
+		planType string
+		want     float64
+	}{
+		{
+			name:     "pro lite is five times plus",
+			planType: "prolite",
+			want:     100.0 / 6.0,
+		},
+		{
+			name:     "pro is twenty times plus",
+			planType: "pro",
+			want:     100.0 / 21.0,
+		},
+		{
+			name:     "pro lite aliases are normalized",
+			planType: "Pro-Lite",
+			want:     100.0 / 6.0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			quotas := []AccountQuota{
+				quotaWithPrimaryUsage("plus", 100),
+				quotaWithPrimaryUsage(tt.planType, 0),
+			}
+
+			got := AggregateQuotas(quotas, "primary")
+			if math.Abs(got-tt.want) > 0.000001 {
+				t.Fatalf("AggregateQuotas(primary) = %v, want %v", got, tt.want)
+			}
+
+			secondaryQuotas := []AccountQuota{
+				quotaWithSecondaryUsage("plus", 100),
+				quotaWithSecondaryUsage(tt.planType, 0),
+			}
+			got = AggregateQuotas(secondaryQuotas, "secondary")
+			if math.Abs(got-tt.want) > 0.000001 {
+				t.Fatalf("AggregateQuotas(secondary) = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
