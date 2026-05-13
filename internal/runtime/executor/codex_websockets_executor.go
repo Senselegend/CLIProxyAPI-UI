@@ -79,9 +79,6 @@ type codexWebsocketSession struct {
 	upstreamDisconnectCh   chan error
 
 	readerConn *websocket.Conn
-
-	upstreamDisconnectOnce sync.Once
-	upstreamDisconnectCh   chan error
 }
 
 func NewCodexWebsocketsExecutor(cfg *config.Config) *CodexWebsocketsExecutor {
@@ -154,22 +151,6 @@ func (s *codexWebsocketSession) configureConn(conn *websocket.Conn) {
 		defer s.writeMu.Unlock()
 		// Reply pongs from the same write lock to avoid concurrent writes.
 		return conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(10*time.Second))
-	})
-}
-
-func (s *codexWebsocketSession) notifyUpstreamDisconnect(err error) {
-	if s == nil {
-		return
-	}
-	s.upstreamDisconnectOnce.Do(func() {
-		if s.upstreamDisconnectCh == nil {
-			return
-		}
-		select {
-		case s.upstreamDisconnectCh <- err:
-		default:
-		}
-		close(s.upstreamDisconnectCh)
 	})
 }
 
@@ -1242,14 +1223,6 @@ func (e *CodexWebsocketsExecutor) getOrCreateSession(sessionID string) *codexWeb
 	}
 	store.sessions[sessionID] = sess
 	return sess
-}
-
-func (e *CodexWebsocketsExecutor) UpstreamDisconnectChan(sessionID string) <-chan error {
-	sess := e.getOrCreateSession(sessionID)
-	if sess == nil {
-		return nil
-	}
-	return sess.upstreamDisconnectCh
 }
 
 func (e *CodexWebsocketsExecutor) ensureUpstreamConn(ctx context.Context, auth *cliproxyauth.Auth, sess *codexWebsocketSession, authID string, wsURL string, headers http.Header) (*websocket.Conn, *http.Response, error) {
