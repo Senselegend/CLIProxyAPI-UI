@@ -522,6 +522,13 @@ func dedupeFunctionCallsByCallID(rawArray string) (string, error) {
 	return string(out), nil
 }
 
+func responsesWebsocketAuthSupportsCompactionReplay(auth *coreauth.Auth) bool {
+	if auth == nil {
+		return false
+	}
+	return websocketUpstreamSupportsIncrementalInput(auth.Attributes, auth.Metadata)
+}
+
 func websocketUpstreamSupportsIncrementalInput(attributes map[string]string, metadata map[string]any) bool {
 	if len(attributes) > 0 {
 		if raw := strings.TrimSpace(attributes["websockets"]); raw != "" {
