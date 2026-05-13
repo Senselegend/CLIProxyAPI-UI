@@ -3,9 +3,7 @@ package auth
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
-	"time"
 )
 
 func TestToolPrefixDisabled(t *testing.T) {
