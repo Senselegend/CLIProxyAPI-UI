@@ -5,12 +5,17 @@ package middleware
 
 import (
 	"bytes"
+	"compress/flate"
+	"compress/gzip"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/andybalholm/brotli"
 	"github.com/gin-gonic/gin"
+	"github.com/klauspost/compress/zstd"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
 )
@@ -56,6 +61,7 @@ func RequestLoggingMiddleware(logger logging.RequestLogger) gin.HandlerFunc {
 			wrapper.logOnErrorOnly = true
 		}
 		c.Writer = wrapper
+		attachWebsocketLogSources(c, logger, loggerEnabled)
 
 		// Process the request
 		c.Next()
@@ -65,6 +71,26 @@ func RequestLoggingMiddleware(logger logging.RequestLogger) gin.HandlerFunc {
 			// Log error but don't interrupt the response
 			// In a real implementation, you might want to use a proper logger here
 		}
+	}
+}
+
+type fileBodySourceFactory interface {
+	NewFileBodySource(prefix string) (*logging.FileBodySource, error)
+}
+
+func attachWebsocketLogSources(c *gin.Context, logger logging.RequestLogger, loggerEnabled bool) {
+	if c == nil || !loggerEnabled || !isResponsesWebsocketUpgrade(c.Request) {
+		return
+	}
+	factory, ok := logger.(fileBodySourceFactory)
+	if !ok || factory == nil {
+		return
+	}
+	if source, errSource := factory.NewFileBodySource("websocket-timeline"); errSource == nil {
+		c.Set(logging.WebsocketTimelineSourceContextKey, source)
+	}
+	if source, errSource := factory.NewFileBodySource("api-websocket-timeline"); errSource == nil {
+		c.Set(logging.APIWebsocketTimelineSourceContextKey, source)
 	}
 }
 
@@ -137,6 +163,10 @@ func captureRequestInfo(c *gin.Context, captureBody bool) (*RequestInfo, error) 
 		// Restore the body for the actual request processing
 		c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 		body = bodyBytes
+		decodedBody, errDecode := decodeRequestBodyForLogging(bodyBytes, c.Request.Header.Get("Content-Encoding"))
+		if errDecode == nil {
+			body = decodedBody
+		}
 	}
 
 	return &RequestInfo{
@@ -147,6 +177,39 @@ func captureRequestInfo(c *gin.Context, captureBody bool) (*RequestInfo, error) 
 		RequestID: logging.GetGinRequestID(c),
 		Timestamp: time.Now(),
 	}, nil
+}
+
+func decodeRequestBodyForLogging(body []byte, contentEncoding string) ([]byte, error) {
+	if len(body) == 0 {
+		return body, nil
+	}
+
+	switch strings.TrimSpace(strings.ToLower(contentEncoding)) {
+	case "", "identity":
+		return body, nil
+	case "gzip":
+		reader, err := gzip.NewReader(bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create gzip reader: %w", err)
+		}
+		defer func() { _ = reader.Close() }()
+		return io.ReadAll(reader)
+	case "deflate":
+		reader := flate.NewReader(bytes.NewReader(body))
+		defer func() { _ = reader.Close() }()
+		return io.ReadAll(reader)
+	case "br":
+		return io.ReadAll(brotli.NewReader(bytes.NewReader(body)))
+	case "zstd":
+		reader, err := zstd.NewReader(bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create zstd reader: %w", err)
+		}
+		defer reader.Close()
+		return io.ReadAll(reader)
+	default:
+		return body, nil
+	}
 }
 
 // shouldLogRequest determines whether the request should be logged.
