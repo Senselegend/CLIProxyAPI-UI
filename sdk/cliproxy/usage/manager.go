@@ -17,10 +17,12 @@ type Record struct {
 	AuthIndex   string
 	AuthType    string
 	Source      string
-	RequestedAt time.Time
-	Latency     time.Duration
-	Failed      bool
-	Detail      Detail
+	// ReasoningEffort stores the translated upstream thinking level for request event logs.
+	ReasoningEffort string
+	RequestedAt     time.Time
+	Latency         time.Duration
+	Failed          bool
+	Detail          Detail
 }
 
 // Detail holds the token usage breakdown.
