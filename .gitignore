@@ -59,3 +59,4 @@ cmd/server/main_test.go
 internal/api/quota_autostart_test.go
 .worktrees/
 .gitignore
+.playwright-mcp/console-2026-05-28T13-58-47-677Z.log
