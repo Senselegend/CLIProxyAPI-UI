@@ -312,11 +312,11 @@ func TestConvertClaudeRequestToCodex_WebSearchToolChoiceUsesDeclaredTypedToolNam
 	result := ConvertClaudeRequestToCodex("test-model", []byte(inputJSON), false)
 	resultJSON := gjson.ParseBytes(result)
 
-	if got := resultJSON.Get("tool_choice.type").String(); got != "function" {
-		t.Fatalf("tool_choice.type = %q, want function. Output: %s", got, string(result))
+	if got := resultJSON.Get("tool_choice.type").String(); got != "web_search" {
+		t.Fatalf("tool_choice.type = %q, want web_search. Output: %s", got, string(result))
 	}
-	if got := resultJSON.Get("tool_choice.name").String(); got != "web_search" {
-		t.Fatalf("tool_choice.name = %q, want web_search. Output: %s", got, string(result))
+	if resultJSON.Get("tool_choice.name").Exists() {
+		t.Fatalf("tool_choice.name should be omitted for web_search choice. Output: %s", string(result))
 	}
 }
 
