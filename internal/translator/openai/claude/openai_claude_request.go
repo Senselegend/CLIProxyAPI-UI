@@ -100,7 +100,7 @@ func ConvertClaudeRequestToOpenAI(modelName string, inputRawJSON []byte, stream 
 	messagesJSON := []byte(`[]`)
 
 	// Handle system message first
-	systemMsgJSON := []byte(`{"role":"system","content":[]}`)
+	systemMsgJSON := []byte(`{"role":"developer","content":[]}`)
 	hasSystemContent := false
 	if system := root.Get("system"); system.Exists() {
 		if system.Type == gjson.String {
@@ -131,6 +131,9 @@ func ConvertClaudeRequestToOpenAI(modelName string, inputRawJSON []byte, stream 
 	if messages := root.Get("messages"); messages.Exists() && messages.IsArray() {
 		messages.ForEach(func(_, message gjson.Result) bool {
 			role := message.Get("role").String()
+			if role == "system" {
+				role = "developer"
+			}
 			contentResult := message.Get("content")
 
 			// Handle content

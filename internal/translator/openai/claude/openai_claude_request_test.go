@@ -359,7 +359,7 @@ func TestConvertClaudeRequestToOpenAI_SystemMessageScenarios(t *testing.T) {
 
 			hasSys := false
 			var sysMsg gjson.Result
-			if len(messages) > 0 && messages[0].Get("role").String() == "system" {
+			if len(messages) > 0 && messages[0].Get("role").String() == "developer" {
 				hasSys = true
 				sysMsg = messages[0]
 			}
@@ -709,8 +709,8 @@ func TestConvertClaudeRequestToOpenAI_StripsClaudeCodeAttribution(t *testing.T) 
 
 	output := ConvertClaudeRequestToOpenAI("gpt-5", inputJSON, false)
 	messages := gjson.GetBytes(output, "messages").Array()
-	if len(messages) == 0 || messages[0].Get("role").String() != "system" {
-		t.Fatalf("Expected first message to be system, got: %s", gjson.GetBytes(output, "messages").Raw)
+	if len(messages) == 0 || messages[0].Get("role").String() != "developer" {
+		t.Fatalf("Expected first message to be developer, got: %s", gjson.GetBytes(output, "messages").Raw)
 	}
 
 	content := messages[0].Get("content").Array()
@@ -719,5 +719,27 @@ func TestConvertClaudeRequestToOpenAI_StripsClaudeCodeAttribution(t *testing.T) 
 	}
 	if got := content[0].Get("text").String(); got != "User system prompt" {
 		t.Fatalf("Unexpected system content: %q", got)
+	}
+}
+
+func TestConvertClaudeRequestToOpenAI_SystemRoleMessageBecomesDeveloper(t *testing.T) {
+	inputJSON := []byte(`{
+		"model": "claude-sonnet-4-5",
+		"messages": [
+			{"role": "system", "content": "Follow project instructions"},
+			{"role": "user", "content": "hi"}
+		]
+	}`)
+
+	output := ConvertClaudeRequestToOpenAI("gpt-5", inputJSON, false)
+	messages := gjson.GetBytes(output, "messages").Array()
+	if len(messages) != 2 {
+		t.Fatalf("Expected 2 messages, got %d: %s", len(messages), gjson.GetBytes(output, "messages").Raw)
+	}
+	if got := messages[0].Get("role").String(); got != "developer" {
+		t.Fatalf("Expected first message role developer, got %q: %s", got, gjson.GetBytes(output, "messages").Raw)
+	}
+	if got := messages[0].Get("content").String(); got != "Follow project instructions" {
+		t.Fatalf("Expected developer content to be preserved, got %q", got)
 	}
 }
