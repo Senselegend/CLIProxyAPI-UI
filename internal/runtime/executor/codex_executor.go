@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -30,9 +31,10 @@ import (
 )
 
 const (
-	codexUserAgent             = "codex-tui/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; 0.118.0)"
-	codexOriginator            = "codex_cli_rs"
-	codexDefaultImageToolModel = "gpt-image-2"
+	codexUserAgent                       = "codex-tui/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; 0.118.0)"
+	codexOriginator                      = "codex_cli_rs"
+	codexDefaultImageToolModel           = "gpt-image-2"
+	codexClaudeTokenCountMinSafetyMargin = int64(4096)
 )
 
 var dataTag = []byte("data:")
@@ -668,10 +670,27 @@ func (e *CodexExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Auth
 	if err != nil {
 		return cliproxyexecutor.Response{}, fmt.Errorf("codex executor: token counting failed: %w", err)
 	}
+	if from == sdktranslator.FormatClaude {
+		count = applyCodexClaudeCountTokensSafetyMargin(count)
+	}
 
 	usageJSON := fmt.Sprintf(`{"response":{"usage":{"input_tokens":%d,"output_tokens":0,"total_tokens":%d}}}`, count, count)
 	translated := sdktranslator.TranslateTokenCount(ctx, to, from, count, []byte(usageJSON))
 	return cliproxyexecutor.Response{Payload: translated}, nil
+}
+
+func applyCodexClaudeCountTokensSafetyMargin(count int64) int64 {
+	if count <= 0 {
+		return count
+	}
+	margin := count / 5
+	if margin < codexClaudeTokenCountMinSafetyMargin {
+		margin = codexClaudeTokenCountMinSafetyMargin
+	}
+	if count > math.MaxInt64-margin {
+		return math.MaxInt64
+	}
+	return count + margin
 }
 
 func tokenizerForCodexModel(model string) (tokenizer.Codec, error) {

@@ -121,3 +121,23 @@ func TestCodexExecutorCountTokensTreatsNullInstructionsAsEmpty(t *testing.T) {
 		t.Fatalf("token count payload mismatch:\nnull=%s\nempty=%s", string(nullResp.Payload), string(emptyResp.Payload))
 	}
 }
+
+func TestApplyCodexClaudeCountTokensSafetyMargin(t *testing.T) {
+	cases := []struct {
+		name  string
+		count int64
+		want  int64
+	}{
+		{name: "zero", count: 0, want: 0},
+		{name: "minimum margin", count: 1000, want: 5096},
+		{name: "twenty percent margin", count: 50000, want: 60000},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := applyCodexClaudeCountTokensSafetyMargin(tc.count); got != tc.want {
+				t.Fatalf("margin(%d) = %d, want %d", tc.count, got, tc.want)
+			}
+		})
+	}
+}
