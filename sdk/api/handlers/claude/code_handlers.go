@@ -107,7 +107,7 @@ func (h *ClaudeCodeAPIHandler) ClaudeCountTokens(c *gin.Context) {
 		return
 	}
 
-	c.Header("Content-Type", "application/json")
+	setClaudeNonStreamingHeaders(c)
 
 	alt := h.GetAlt(c)
 	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
@@ -121,7 +121,9 @@ func (h *ClaudeCodeAPIHandler) ClaudeCountTokens(c *gin.Context) {
 		return
 	}
 	handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
-	_, _ = c.Writer.Write(resp)
+	if _, errWrite := c.Writer.Write(resp); errWrite != nil {
+		logClaudeDownstreamWriteError(c, "count_tokens response", errWrite)
+	}
 	cliCancel()
 }
 
@@ -161,7 +163,7 @@ func (h *ClaudeCodeAPIHandler) ClaudeModels(c *gin.Context) {
 //   - modelName: The name of the Gemini model to use for content generation
 //   - rawJSON: The raw JSON request body containing generation parameters and content
 func (h *ClaudeCodeAPIHandler) handleNonStreamingResponse(c *gin.Context, rawJSON []byte) {
-	c.Header("Content-Type", "application/json")
+	setClaudeNonStreamingHeaders(c)
 	alt := h.GetAlt(c)
 	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
 	stopKeepAlive := h.StartNonStreamingKeepAlive(c, cliCtx)
@@ -198,7 +200,9 @@ func (h *ClaudeCodeAPIHandler) handleNonStreamingResponse(c *gin.Context, rawJSO
 	}
 
 	handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
-	_, _ = c.Writer.Write(resp)
+	if _, errWrite := c.Writer.Write(resp); errWrite != nil {
+		logClaudeDownstreamWriteError(c, "messages response", errWrite)
+	}
 	cliCancel()
 }
 
@@ -392,7 +396,28 @@ func (h *ClaudeCodeAPIHandler) WriteErrorResponse(c *gin.Context, msg *interface
 		c.Writer.Header().Set("Content-Type", "application/json")
 	}
 	c.Status(status)
-	_, _ = c.Writer.Write(body)
+	if _, errWrite := c.Writer.Write(body); errWrite != nil {
+		logClaudeDownstreamWriteError(c, "error response", errWrite)
+	}
+}
+
+func setClaudeNonStreamingHeaders(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	c.Header("Content-Type", "application/json")
+	c.Header("Connection", "close")
+}
+
+func logClaudeDownstreamWriteError(c *gin.Context, operation string, err error) {
+	if err == nil {
+		return
+	}
+	path := ""
+	if c != nil && c.Request != nil {
+		path = c.Request.URL.Path
+	}
+	log.WithError(err).Warnf("claude downstream write failed: operation=%s path=%s", operation, path)
 }
 
 func claudeErrorDetailFromText(status int, errText string) (string, string) {
